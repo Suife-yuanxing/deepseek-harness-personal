@@ -7,6 +7,13 @@
  * adopts the picked path, and owns the error surface. Adding a workspace has
  * exactly one route — pick a host directory, new or existing — because the
  * occupant's own create-folder affordance already covers creating one.
+ *
+ * Federations render after the regular workspaces when the deployment's gray
+ * switch is on: stacked-folders icon rows with a member-count capsule and a
+ * hover tooltip listing every member (the first marked primary). Picking one
+ * claims the federation identity server-side; the "New federation…" action
+ * raises the create panel. Everything routes through the injected carrier —
+ * no sessions-object knowledge in this package.
  */
 import type { ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useState } from 'react'
@@ -14,13 +21,60 @@ import {
   Button, IconFolderClose16, IconPlusOutline16, Menu, Modal, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  WorkspaceId, WorkspaceListState, WorkspaceView,
+  FederationId, FederationView, WorkspaceId, WorkspaceListState, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DirectoryFlowOwnerProps, WorkspacePickerProps } from './contract/slots.ts'
-import css from './WorkspacePicker.module.css'
+import { CreateFederationPanel } from './CreateFederationPanel.tsx'
+import cssFlow from './WorkspacePicker.module.css'
+import cssFed from './Federations.module.css'
 
 const ADD_WORKSPACE = '::add-workspace'
+/** Menu-entry key prefix disambiguating federation rows from workspace ids. */
+const FEDERATION_PREFIX = '::federation:'
+const ADD_FEDERATION = '::add-federation'
+
+/**
+ * Stacked-folders glyph: two offset rounded rectangles carrying the
+ * multi-root semantics of a federation row. Per-instance (not a shared
+ * icon-library export) because the two-plane offset is this feature's visual.
+ */
+function StackedFoldersIcon(): ReactNode {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="3.5" y="1.5" width="10" height="9" rx="1.5" fill="currentColor" opacity={0.45} />
+      <rect x="2.5" y="4.5" width="10" height="9" rx="1.5" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** Tooltip lines: every member path basename, the primary root first and marked. */
+function federationTooltipLines(federation: FederationView, t: WorkspacePickFlowProps['t']): string {
+  return federation.memberPaths
+    .map((path, index) => index === 0 ? `${t('federation.panel.primary')} ${basenameOf(path)}` : basenameOf(path))
+    .join('\n')
+}
+
+/** One federation menu row: stacked-folders icon, tooltip-bearing label node, count capsule. */
+function federationEntry(federation: FederationView, t: WorkspacePickFlowProps['t'], disabled: boolean): MenuEntry {
+  return {
+    id: `${FEDERATION_PREFIX}${federation.federationId}`,
+    label: (
+      <span className={cssFed.fedLabel} title={federationTooltipLines(federation, t)}>
+        <span className={cssFed.fedTitle}>{federation.title}</span>
+        <span className={cssFed.fedBadge}>×{federation.memberPaths.length}</span>
+      </span>
+    ),
+    icon: <StackedFoldersIcon />,
+    disabled,
+  }
+}
+
+/** Everything after the last path separator (Windows and POSIX forms). */
+function basenameOf(path: string): string {
+  const tail = path.split(/[\\/]/).pop()
+  return tail ?? ''
+}
 
 /** Core flow props: the owner supplies popover control and pick semantics. */
 export interface WorkspacePickFlowProps {
@@ -34,6 +88,10 @@ export interface WorkspacePickFlowProps {
   useWorkspaces: <S>(selector: (state: WorkspaceListState) => S) => S
   /** Adopt a picked host directory as a real Workspace. */
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  /** Host carrier that validates members and persists a new federation. */
+  createFederation: WorkspacePickerProps['createFederation']
+  /** Start (and open) a session claimed from a durable federation identity. */
+  startFederatedSession: WorkspacePickerProps['startFederatedSession']
   /** Bound occupancy selector hook for this surface's directory-flow hole (empty leaves the surface with no add action). */
   useDirectoryFlow: SnapshotSelectorHook<boolean>
   /** Render this surface's directory-flow hole with the owner conversation (the entry's narrowed renderSlot). */
@@ -61,6 +119,8 @@ export function WorkspacePickFlow({
   anchorRef,
   useWorkspaces,
   createWorkspace,
+  createFederation,
+  startFederatedSession,
   useDirectoryFlow,
   renderDirectoryFlow,
   onPick,
@@ -71,14 +131,23 @@ export function WorkspacePickFlow({
 }: WorkspacePickFlowProps) {
   const workspaceSnapshot = useWorkspaces(state => state)
   const workspaces = workspaceSnapshot.items
+  const federations = workspaceSnapshot.federations
+  // Gray switch gates only creation/affordances: durable federations resolve
+  // regardless, but a disabled deployment hides both the rows and the panel
+  // action so the menu cannot offer what the Host would refuse to serve.
+  const federationsShown = workspaceSnapshot.federatedWorkspacesEnabled && !addOnly
   const getAnchorRect = useCallback(
     () => anchorRef?.current?.getBoundingClientRect() ?? null,
     [anchorRef],
   )
   const [errorOpen, setErrorOpen] = useState(false)
   const [modalError, setModalError] = useState<string | null>(null)
+  // The dialog title follows the failing carrier: folder adoption vs
+  // federated-session claim produce different user-facing headings.
+  const [errorContext, setErrorContext] = useState<'folder' | 'federation'>('folder')
   const [flowOpen, setFlowOpen] = useState(false)
   const [pickingFolder, setPickingFolder] = useState(false)
+  const [createPanelOpen, setCreatePanelOpen] = useState(false)
   // One picking interaction at a time: while the flow is open (native chooser
   // pending, browse dialog up) or its pick is being adopted, every other
   // menu action stays disabled — a late outcome must not race a concurrent
@@ -98,20 +167,26 @@ export function WorkspacePickFlow({
   useEffect(() => {
     if (flowOpen && !flowAvailable) setFlowOpen(false)
   }, [flowOpen, flowAvailable])
-  const addEntries: MenuEntry[] = flowAvailable
-    ? [{ id: ADD_WORKSPACE, label: t('menu.addWorkspace'), icon: <IconPlusOutline16 size={16} />, disabled: flowBusy }]
-    : []
-  // With workspaces listed, the add action pins below the scroll region
-  // (divider + always visible); otherwise it IS the menu.
-  const pinAdd = !addOnly && workspaces.length > 0
-  const items: MenuEntry[] = pinAdd
-    ? workspaces.map(workspace => ({
+  const addEntries: MenuEntry[] = [
+    ...(flowAvailable ? [{ id: ADD_WORKSPACE, label: t('menu.addWorkspace'), icon: <IconPlusOutline16 size={16} />, disabled: flowBusy } satisfies MenuEntry] : []),
+    // The create panel needs no directory-flow occupant; it rides this
+    // package's own modal entirely.
+    ...(federationsShown ? [{ id: ADD_FEDERATION, label: t('federation.action.create'), disabled: flowBusy } satisfies MenuEntry] : []),
+  ]
+  // With workspaces listed, the add actions pin below the scroll region
+  // (divider + always visible); otherwise they ARE the menu. Regular
+  // workspace rows stay ahead of the federation rows (the pick-flow order).
+  const rows: MenuEntry[] = [
+    ...workspaces.map(workspace => ({
       id: workspace.workspaceId,
       label: workspace.title,
       icon: <IconFolderClose16 size={16} />,
       disabled: flowBusy,
-    }))
-    : addEntries
+    }) satisfies MenuEntry),
+    ...(federationsShown ? federations.map(federation => federationEntry(federation, t, flowBusy)) : []),
+  ]
+  const pinAdd = !addOnly && rows.length > 0
+  const items: MenuEntry[] = pinAdd ? rows : addEntries
   // Nothing listed and nothing to add with (a composition that mounts this
   // package without any directory-picker): an empty popover would claim a
   // choice that does not exist, so the anchor gesture shows nothing at all.
@@ -128,6 +203,7 @@ export function WorkspacePickFlow({
       setFlowOpen(false)
       onPick(workspace.workspaceId)
     }).catch((reason: unknown) => {
+      setErrorContext('folder')
       setModalError(reason instanceof Error ? reason.message : String(reason))
       setFlowOpen(false)
       setErrorOpen(true)
@@ -149,7 +225,13 @@ export function WorkspacePickFlow({
   // loading status instead of jumping into a flow the arriving list would have
   // made unnecessary; the add-only surface lists nothing and never waits.
   const listSettled = addOnly || workspaceSnapshot.phase === 'ready'
-  const addIsTheOnlyEntry = !pinAdd && listSettled && addEntries.length === 1
+  const actionableEntries = listSettled ? addEntries : []
+  // Only the add-workspace gesture consumes the anchor's open request into a
+  // flow directly. A sole create-federation entry still shows its one-row
+  // menu: the panel is this package's own modal, and the existing
+  // single-entry shortcut predates federations (its behavior stays untouched).
+  const addIsTheOnlyEntry = !pinAdd && actionableEntries.length === 1
+    && actionableEntries.every(entry => entry.id === ADD_WORKSPACE)
   // `flowBusy` gates this exactly as it disables the equivalent menu entry: a
   // pick still being adopted owns the surface until it settles.
   useEffect(() => {
@@ -166,15 +248,39 @@ export function WorkspacePickFlow({
     },
     onCancel: () => { setFlowOpen(false) },
     onError: (message) => {
+      setErrorContext('folder')
       setFlowOpen(false)
       setModalError(message)
       setErrorOpen(true)
     },
   }
 
+  /**
+   * Claim a federation session; failures reuse the shared error dialog under
+   * the federation-specific heading. Success opens the session from within
+   * the injected callback, leaving the menu free to close immediately.
+   */
+  const claimFederatedSession = (federationId: FederationId): void => {
+    onClose()
+    startFederatedSession(federationId).catch((reason: unknown) => {
+      setErrorContext('federation')
+      setModalError(reason instanceof Error ? reason.message : String(reason))
+      setErrorOpen(true)
+    })
+  }
+
   const handleSelect = (id: string): void => {
     if (id === ADD_WORKSPACE) {
       openDirectoryFlow()
+      return
+    }
+    if (id === ADD_FEDERATION) {
+      onClose()
+      setCreatePanelOpen(true)
+      return
+    }
+    if (id.startsWith(FEDERATION_PREFIX)) {
+      claimFederatedSession(id.slice(FEDERATION_PREFIX.length) as FederationId)
       return
     }
     onPick(id as WorkspaceId)
@@ -194,24 +300,32 @@ export function WorkspacePickFlow({
         portal
         getAnchorRect={getAnchorRect}
       />
-      {open && !addIsTheOnlyEntry && !menuIsEmpty && workspaceSnapshot.phase === 'pending' && <div className={css.menuStatus} role="status">{t('picker.loading')}</div>}
+      {open && !addIsTheOnlyEntry && !menuIsEmpty && workspaceSnapshot.phase === 'pending' && <div className={cssFlow.menuStatus} role="status">{t('picker.loading')}</div>}
       {renderDirectoryFlow(flowOwner)}
       <Modal
         open={errorOpen}
         onClose={closeModal}
         closeLabel={t('close')}
-        title={t('folderError.title')}
+        title={t(errorContext === 'federation' ? 'federation.sessionError.title' : 'folderError.title')}
         footer={(
           <>
-            <Button variant="outline" className={css.modalAction} onClick={closeModal}>{t('cancel')}</Button>
+            <Button variant="outline" className={cssFlow.modalAction} onClick={closeModal}>{t('cancel')}</Button>
             {/* Retrying needs an occupant to serve the flow; without one the
               * button would open a flow nobody can answer or cancel. */}
-            <Button variant="primary" className={css.modalAction} disabled={!flowAvailable} onClick={openDirectoryFlow}>{t('folderError.retry')}</Button>
+            <Button variant="primary" className={cssFlow.modalAction} disabled={!flowAvailable} onClick={openDirectoryFlow}>{t('folderError.retry')}</Button>
           </>
         )}
       >
-        <div className={css.modalError} role="alert">{modalError}</div>
+        <div className={cssFlow.modalError} role="alert">{modalError}</div>
       </Modal>
+      {createPanelOpen && (
+        <CreateFederationPanel
+          createFederation={createFederation}
+          workspaces={workspaces}
+          t={t}
+          onClose={() => { setCreatePanelOpen(false) }}
+        />
+      )}
     </>
   )
 }
@@ -230,6 +344,8 @@ export function WorkspacePicker({
   onPick,
   onClose,
   createWorkspace,
+  createFederation,
+  startFederatedSession,
   useDirectoryFlow,
   renderSlot,
   t,
@@ -241,6 +357,8 @@ export function WorkspacePicker({
       anchorRef={anchorRef}
       useWorkspaces={useWorkspaces}
       createWorkspace={createWorkspace}
+      createFederation={createFederation}
+      startFederatedSession={startFederatedSession}
       useDirectoryFlow={useDirectoryFlow}
       renderDirectoryFlow={owner => renderSlot('conversation.hero.workspace.directoryFlow', owner)}
       selectedId={selectedId}

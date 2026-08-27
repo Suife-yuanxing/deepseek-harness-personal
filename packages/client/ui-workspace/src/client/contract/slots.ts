@@ -28,7 +28,7 @@ import type { HostObservable, PropsLocale, PropsRenderSlots, PropsRuntime, Props
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {
-  SessionId, SessionSearchResultItem, WorkspaceId, WorkspaceView,
+  FederationId, FederationView, SessionId, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { createWorkspaceViewStore } from '../stores.ts'
 
@@ -148,12 +148,25 @@ export type WorkspaceBrowserProps =
 
 /**
  * Picker-private injected share. Pick semantics remain in the owner's onPick
- * callback; this callback creates only the real Host Workspace. A type alias
+ * callback; these callbacks create only the real Host entities. A type alias
  * supplies the implicit index signature required by the registry.
  */
 export type WorkspacePickerInjected = DirectoryPickingInjected & {
   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  /**
+   * Create a federation over two or more registered workspace directories.
+   * Rejects with the Host business error (the create panel shows its
+   * message inline); success converges the list through the refresh echo.
+   */
+  createFederation: (input: { title?: string; memberPaths: string[] }) => Promise<FederationView>
+  /**
+   * Start a session from a durable federation identity and open it: the Host
+   * resolves the primary cwd, the member roots, and the primary attach under
+   * the main folder's workspace group. Failures reject with the Host
+   * business error for the picker's error dialog.
+   */
+  startFederatedSession: (federationId: FederationId) => Promise<void>
 }
 
 /**

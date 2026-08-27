@@ -2,12 +2,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type {
-  SessionListState, WorkspaceId, WorkspaceListState, WorkspaceView,
+  FederationView, SessionListState, WorkspaceId, WorkspaceListState, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type { DirectoryFlowOwnerProps, WorkspacePickerProps } from '../src/client/contract/slots.ts'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+import cssFed from '../src/client/Federations.module.css'
 import { WorkspacePicker } from '../src/client/WorkspacePicker.tsx'
 import { zh } from '../src/client/locales.ts'
 
@@ -18,9 +19,16 @@ afterEach(cleanup)
 const t: WorkspacePickerProps['t'] = makeTranslate(zh, commonZh)
 
 const wid = (id: string) => id as WorkspaceId
+const fid = (id: string) => id as FederationView['federationId']
 function workspace(id: string, title = id): WorkspaceView {
   return {
     workspaceId: wid(id), path: `/projects/${id}`, title, sessionIds: [],
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+}
+function federation(id: string, title: string, memberPaths: string[]): FederationView {
+  return {
+    federationId: fid(id), title, memberPaths,
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   }
 }
@@ -30,9 +38,14 @@ function hook<T>(snapshot: T) {
 const sessions: SessionListState = {
   ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
 }
-const workspaceState = (items: readonly WorkspaceView[]): WorkspaceListState => ({
-  items, archivedSessionIds: [], federations: [], state: 'idle', phase: 'ready', error: null, baselinesReady: true,
+const workspaceState = (
+  items: readonly WorkspaceView[],
+  extra: Partial<WorkspaceListState> = {},
+): WorkspaceListState => ({
+  items, archivedSessionIds: [], federations: [], federatedWorkspacesEnabled: true,
+  state: 'idle', phase: 'ready', error: null, baselinesReady: true,
   recentWorkspaceId: items[0]?.workspaceId,
+  ...extra,
 })
 function anchor(): { current: HTMLElement } {
   const element = document.createElement('button')
@@ -81,20 +94,25 @@ function mount(
   items: readonly WorkspaceView[] = [workspace('alpha', 'Alpha')],
   createWorkspace = vi.fn(),
   occupancy = occupancySource(),
+  listExtra: Partial<WorkspaceListState> = {},
 ) {
   const onPick = vi.fn()
   const onClose = vi.fn()
+  const createFederation = vi.fn(async () => federation('f-new', 'new', []))
+  const startFederatedSession = vi.fn(async () => {})
   const anchorRef = anchor()
   const { probe, renderSlot } = flowProbe()
-  const renderPicker = (nextItems: readonly WorkspaceView[]) => (
+  const renderPicker = (nextItems: readonly WorkspaceView[], nextExtra?: Partial<WorkspaceListState>) => (
     <WorkspacePicker
       open
       anchorRef={anchorRef}
       useSessions={hook(sessions)}
-      useWorkspaces={hook(workspaceState(nextItems))}
+      useWorkspaces={hook(workspaceState(nextItems, nextExtra ?? listExtra))}
       onPick={onPick}
       onClose={onClose}
       createWorkspace={createWorkspace}
+      createFederation={createFederation}
+      startFederatedSession={startFederatedSession}
       useDirectoryFlow={occupancy.useDirectoryFlow}
       renderSlot={renderSlot}
       t={t}
@@ -105,7 +123,10 @@ function mount(
   )
   return {
     view, onPick, onClose, createWorkspace, probe, occupancy,
-    rerenderItems: (nextItems: readonly WorkspaceView[]) => { view.rerender(renderPicker(nextItems)) },
+    createFederation, startFederatedSession,
+    rerenderItems(nextItems: readonly WorkspaceView[], nextExtra?: Partial<WorkspaceListState>): void {
+      view.rerender(renderPicker(nextItems, nextExtra))
+    },
   }
 }
 
@@ -140,7 +161,9 @@ describe('WorkspacePicker', () => {
   it('raises the flow straight from the anchor gesture when adding is the only entry', () => {
     // Nothing to list and one action left: a one-row menu would offer no
     // choice, so the owner's open request lands in the flow itself.
-    const b = mount([])
+    // (Federation affordances off: this guard predates them — with both
+    // actions present the gesture shows the two-row menu instead.)
+    const b = mount([], vi.fn(), occupancySource(), { federatedWorkspacesEnabled: false })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(screen.queryByRole('menuitem', { name: '添加工作区…' })).toBeNull()
     expect(b.onClose).toHaveBeenCalled()
@@ -212,6 +235,8 @@ describe('WorkspacePicker', () => {
       <WorkspacePicker
         open useSessions={hook(sessions)} useWorkspaces={hook(workspaceState([workspace('alpha', 'Alpha')]))}
         onPick={vi.fn()} onClose={vi.fn()} createWorkspace={vi.fn()}
+        createFederation={vi.fn(async () => federation('f-new', 'new', []))}
+        startFederatedSession={vi.fn(async () => {})}
         useDirectoryFlow={occupancySource().useDirectoryFlow} renderSlot={renderSlot} t={t}
       />,
     )
@@ -220,13 +245,15 @@ describe('WorkspacePicker', () => {
 
   it('keeps the menu up while the list baseline is still in flight', () => {
     const state: WorkspaceListState = {
-      ...workspaceState([]), phase: 'pending', state: 'loading', baselinesReady: false,
+      ...workspaceState([], { phase: 'pending', state: 'loading', baselinesReady: false }),
     }
     const { renderSlot } = flowProbe()
     render(
       <WorkspacePicker
         open anchorRef={anchor()} useSessions={hook(sessions)} useWorkspaces={hook(state)}
         onPick={vi.fn()} onClose={vi.fn()} createWorkspace={vi.fn()}
+        createFederation={vi.fn(async () => federation('f-new', 'new', []))}
+        startFederatedSession={vi.fn(async () => {})}
         useDirectoryFlow={occupancySource().useDirectoryFlow} renderSlot={renderSlot} t={t}
       />,
     )
@@ -240,11 +267,20 @@ describe('WorkspacePicker', () => {
   it('shows no popover at all when nothing is listed and nothing can be added', () => {
     // A composition mounting this package without any directory-picker: the
     // hero anchor has neither a Workspace to pick nor a way to add one, so it
-    // must not claim a choice with an empty menu.
-    const b = mount([], vi.fn(), occupancySource(false))
+    // must not claim a choice with an empty menu. (Gray switch off keeps the
+    // federation action hidden too.)
+    const b = mount([], vi.fn(), occupancySource(false), { federatedWorkspacesEnabled: false })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(screen.queryByTestId('directory-flow')).toBeNull()
     expect(b.createWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('shows the create-federation row alone as a real choice when the picker composition lacks a directory flow', () => {
+    // Gray switch on and a picker-less composition: the federation action is
+    // a genuinely servable choice, so a one-row menu appears rather than an
+    // empty surface claiming nothing exists to do.
+    mount([], vi.fn(), occupancySource(false))
+    expect(screen.getByRole('menuitem', { name: '新建联合工作区…' })).toBeTruthy()
   })
 
   it('holds the anchor gesture while an adoption is still settling', async () => {
@@ -303,5 +339,85 @@ describe('WorkspacePicker', () => {
     expect(b.probe.owner!.open).toBe(false)
     expect(screen.getByRole<HTMLButtonElement>('menuitem', { name: 'Alpha' }).disabled).toBe(false)
     expect(screen.queryByRole('menuitem', { name: '添加工作区…' })).toBeNull()
+  })
+
+  describe('federation entries', () => {
+    const pair = federation('f1', 'front + back', ['/projects/alpha', '/projects/back'])
+
+    it('lists federations after regular workspaces with member count badges and a tooltip', () => {
+      mount([workspace('alpha', 'Alpha')], vi.fn(), occupancySource(), { federations: [pair] })
+      // Document order: scroll-region rows (workspace first, federation
+      // after), then the pinned add actions.
+      expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+        'Alpha',
+        'front + back×2',
+        '添加工作区…',
+        '新建联合工作区…',
+      ])
+      const fedRow = screen.getByRole('menuitem', { name: /front \+ back/ })
+      expect(fedRow.querySelector('[title]')?.getAttribute('title')).toBe('主 alpha\nback')
+    })
+
+    it('claims a picked federation through the carrier and closes the menu', async () => {
+      const b = mount([workspace('alpha', 'Alpha')], vi.fn(), occupancySource(), { federations: [pair] })
+      fireEvent.click(screen.getByRole('menuitem', { name: /front \+ back/ }))
+      expect(b.startFederatedSession).toHaveBeenCalledWith(pair.federationId)
+      expect(b.onClose).toHaveBeenCalled()
+      expect(b.onPick).not.toHaveBeenCalled()
+    })
+
+    it('raises the create panel from the action and creates through the carrier', async () => {
+      const b = mount(
+        [workspace('alpha', 'Alpha'), workspace('beta', 'Beta')],
+        vi.fn(),
+        occupancySource(),
+      )
+      fireEvent.click(screen.getByRole('menuitem', { name: '新建联合工作区…' }))
+      expect(screen.getByRole('dialog', { name: '新建联合工作区' })).toBeTruthy()
+      // <2 members keeps confirm disabled with its hint.
+      expect(screen.getByRole('button', { name: '创建' }).disabled).toBe(true)
+      expect(screen.getByText('至少选择两个文件夹')).toBeTruthy()
+      // Two checks make the default title from basenames; create carries them in check order.
+      fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
+      fireEvent.click(screen.getByRole('checkbox', { name: /Beta/ }))
+      expect(screen.getByRole('button', { name: '创建' }).disabled).toBe(false)
+      fireEvent.click(screen.getByRole('button', { name: '创建' }))
+      await waitFor(() => {
+        expect(b.createFederation).toHaveBeenCalledWith({ title: 'alpha + beta', memberPaths: ['/projects/alpha', '/projects/beta'] })
+      })
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull()
+      })
+    })
+
+    it('hides every federation affordance while the gray switch is off, keeping plain rows intact', () => {
+      const b = mount([workspace('alpha', 'Alpha')], vi.fn(), occupancySource(), {
+        federatedWorkspacesEnabled: false,
+        federations: [pair],
+      })
+      expect(screen.queryByRole('menuitem', { name: /front \+ back/ })).toBeNull()
+      expect(screen.queryByRole('menuitem', { name: '新建联合工作区…' })).toBeNull()
+      // Regular workspace row unaffected.
+      expect(screen.getByRole('menuitem', { name: 'Alpha' })).toBeTruthy()
+      expect(b.createFederation).not.toHaveBeenCalled()
+    })
+
+    it('leaves no federation DOM at all for an ordinary deployment', () => {
+      mount([workspace('alpha', 'Alpha')])
+      expect(document.querySelector(`.${cssFed.fedBadge}`)).toBeNull()
+      expect(document.querySelectorAll(`.${cssFed.fedLabel}`).length).toBe(0)
+    })
+
+    it('reports a failed session claim under the federation error heading', async () => {
+      const b = mount([workspace('alpha', 'Alpha')], vi.fn(), occupancySource(), {
+        federations: [pair],
+      })
+      b.startFederatedSession.mockRejectedValueOnce(new Error('gray switch is closed'))
+      fireEvent.click(screen.getByRole('menuitem', { name: /front \+ back/ }))
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: '无法打开联合会话' })).toBeTruthy()
+      })
+      expect(screen.getByRole('alert').textContent).toBe('gray switch is closed')
+    })
   })
 })

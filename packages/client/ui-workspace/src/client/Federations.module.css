@@ -1,0 +1,127 @@
+/* Federation affordances: the pick-flow menu entries and the
+ * create-federation panel. Colors ride shared --dsw-* aliases only; the
+ * count badge keeps a full-pill geometry. */
+
+/** Menu row label node: ellipsized title plus the trailing member-count capsule. */
+.fedLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fedTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fedBadge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 9999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* ---- create-federation panel ---- */
+
+.memberList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.memberRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.memberToggle {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.memberToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.checkbox {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--dsw-alias-border);
+  color: transparent;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.checked {
+  border-color: var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.memberText {
+  min-width: 0;
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.memberTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+
+.memberPath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.panelHint {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.inlineError {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.titleField {
+  margin-top: 12px;
+}
+
+.primaryAction {
+  flex: none;
+}

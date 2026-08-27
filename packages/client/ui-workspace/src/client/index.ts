@@ -103,6 +103,13 @@ export function apply(ctx: ClientContext): void {
   })
   const pickerInjected = (): WorkspacePickerInjected => ({
     createWorkspace: input => ctx.workspaces.create(input),
+    createFederation: input => ctx.workspaces.createFederation(input),
+    // Claim then open: the Host resolves the primary cwd, member roots, and
+    // the primary attach; this closure only drives the resulting selection.
+    startFederatedSession: async (federationId) => {
+      const sessionId = await ctx.workspaces.startFederatedSession(federationId)
+      ctx.sessions.open(sessionId)
+    },
     hooks: { directoryFlow: pickerFlowSource },
   })
   // Each registration declares its directory-flow child in the same call;
