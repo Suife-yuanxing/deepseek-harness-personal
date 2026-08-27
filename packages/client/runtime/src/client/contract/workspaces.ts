@@ -6,7 +6,7 @@
  * the concrete class. Widening this interface is the explicit act of
  * widening what features may do to the workspaces domain.
  */
-import type { DirectoryListing, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { DirectoryListing, FederationId, FederationView, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import type { WorkspaceListState } from '../workspaces/service.ts'
 import type { ObservableSnapshot } from './store.ts'
 
@@ -34,6 +34,20 @@ export interface IWorkspaces {
    * @returns the created or idempotently resolved Workspace.
    */
   create(input: { path: string }): Promise<WorkspaceView>
+  /**
+   * Create a federation over validated members, then converge the list state.
+   * @param input - optional title plus two or more member paths in order.
+   * @returns the created federation view.
+   */
+  createFederation(input: { title?: string; memberPaths: string[] }): Promise<FederationView>
+  /**
+   * Start a session from a durable federation identity (Host resolves the
+   * primary cwd, member roots, and primary attach). Failures surface as the
+   * caller-visible rejection carrying the Host business code.
+   * @param federationId - claimed federation.
+   * @returns the created session id; open it with `sessions.open`.
+   */
+  startFederatedSession(federationId: FederationId): Promise<SessionId>
   /**
    * Open the Host's native directory picker.
    * @returns the selected path, or null when the user cancelled.

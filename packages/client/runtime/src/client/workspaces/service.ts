@@ -2,7 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  DirectoryListing, IApiClient, RpcError,
+  DirectoryListing, FederationId, FederationView, IApiClient, RpcError,
   SessionId, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '../contract/store.ts'
@@ -22,6 +22,8 @@ export interface WorkspaceListState {
    * build their own transient Set.
    */
   archivedSessionIds: readonly SessionId[]
+  /** Durable federations in creation order (the pick flow's read face). */
+  federations: readonly FederationView[]
   state: 'idle' | 'loading' | 'error'
   phase: WorkspaceListPhase
   error: RpcError | null
@@ -36,6 +38,14 @@ export class WorkspaceCreateError extends Error {
   constructor(readonly rpcError: RpcError) {
     super(`workspace create failed: ${rpcError.code}: ${rpcError.message}`)
     this.name = 'WorkspaceCreateError'
+  }
+}
+
+/** Structured federation failure (create or session claim) for the pick flows. */
+export class FederationCreateError extends Error {
+  constructor(readonly rpcError: RpcError) {
+    super(`federation request failed: ${rpcError.code}: ${rpcError.message}`)
+    this.name = 'FederationCreateError'
   }
 }
 
@@ -66,7 +76,7 @@ export class WorkspaceRuntime implements IWorkspaces {
   constructor(ctx: Context, private readonly api: IApiClient, private readonly sessions: SessionsPort) {
     this.manager = new WorkspaceManager(api)
     this.list = createSnapshotStore<WorkspaceListState>({
-      items: [], archivedSessionIds: [], state: 'idle', phase: 'pending', error: null,
+      items: [], archivedSessionIds: [], federations: [], state: 'idle', phase: 'pending', error: null,
       baselinesReady: false, recentWorkspaceId: undefined,
     })
     this.manager.subscribe(() => { this.project() })
@@ -200,6 +210,31 @@ export class WorkspaceRuntime implements IWorkspaces {
     const result = await this.manager.create(input)
     if (!result.ok) throw new WorkspaceCreateError(result.error)
     return result.value.workspace
+  }
+
+  /**
+   * Create a federation over validated members, then converge the list.
+   * @param input - optional title plus two or more member paths in order.
+   * @returns the created federation view.
+   */
+  async createFederation(input: { title?: string; memberPaths: string[] }): Promise<FederationView> {
+    const result = await this.manager.createFederation(input)
+    if (!result.ok) throw new FederationCreateError(result.error)
+    return result.value.federation
+  }
+
+  /**
+   * Start a session from a durable federation identity: the Host resolves the
+   * primary member as cwd and fixes the remaining members as additional roots,
+   * then attaches to the primary workspace for grouping. The caller owns
+   * navigation via the returned id (`sessions.open`).
+   * @param federationId - the claimed federation identity.
+   * @returns the created session id (already in the list store).
+   */
+  async startFederatedSession(federationId: FederationId): Promise<SessionId> {
+    const result = await this.api.sessions.create({ federationId })
+    if (!result.ok) throw new FederationCreateError(result.error)
+    return result.value.sessionId
   }
 
   /**
@@ -345,6 +380,7 @@ export class WorkspaceRuntime implements IWorkspaces {
     this.list.set({
       items: workspace.items,
       archivedSessionIds: workspace.archivedSessionIds,
+      federations: workspace.federations,
       state: workspace.state,
       phase: workspace.phase,
       error: workspace.error,

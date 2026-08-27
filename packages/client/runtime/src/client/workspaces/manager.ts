@@ -1,6 +1,7 @@
 /** Workspace baseline, incremental-frame, and unary-action owner. */
 
 import type {
+  FederationView, FederationId,
   HostFrame, IApiClient, RpcError, RpcRequest, RpcResult, SessionId, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { transportError } from '@deepseek-ai/dsh-host-apiproxy/api'
@@ -21,6 +22,8 @@ export interface WorkspaceListSnapshot {
    * lookups build their own transient Set where they need one.
    */
   archivedSessionIds: readonly SessionId[]
+  /** Durable federation compositions in creation order (read face for pick flows). */
+  federations: readonly FederationView[]
   state: 'idle' | 'loading' | 'error'
   phase: WorkspaceListPhase
   error: RpcError | null
@@ -39,6 +42,7 @@ export class WorkspaceManager {
   // Full-snapshot state (list response / unary response / changed frame all
   // carry the complete set), so deltas never merge — installs replace.
   private archivedSessionIds: readonly SessionId[] = []
+  private federations: readonly FederationView[] = []
   private state: WorkspaceListSnapshot['state'] = 'idle'
   private phase: WorkspaceListPhase = 'pending'
   private error: RpcError | null = null
@@ -99,6 +103,7 @@ export class WorkspaceManager {
           for (const delta of frames) items = applyWorkspaceDelta(items, delta)
           this.installViews(items)
           if (!this.archivedSupersedesRefresh) this.installArchived(result.value.archivedSessionIds)
+          this.federations = result.value.federations
           this.state = 'idle'
           this.phase = 'ready'
         } else {
@@ -232,6 +237,35 @@ export class WorkspaceManager {
   }
 
   /**
+   * Create a federation over validated members. The unary echo installs
+   * nothing locally: the follow-up refresh re-pulls the authoritative list,
+   * keeping one install path (the baseline) for the read face.
+   * @param input - optional title plus two or more member paths.
+   * @returns the wire result carrying the created federation view.
+   */
+  async createFederation(
+    input: { title?: string; memberPaths: string[] },
+  ): Promise<RpcResult<{ federation: FederationView; created: boolean }>> {
+    const result = await this.api.workspace.createFederation(input)
+    if (result.ok) void this.refresh()
+    return result
+  }
+
+  /** Rename a federation; success triggers the same refresh convergence. */
+  async renameFederation(federationId: FederationId, title: string): Promise<RpcResult<{ federation: FederationView }>> {
+    const result = await this.api.workspace.renameFederation({ federationId, title })
+    if (result.ok) void this.refresh()
+    return result
+  }
+
+  /** Delete a federation registration (idempotent host-side); refresh converges the list. */
+  async deleteFederation(federationId: FederationId): Promise<RpcResult<{ deleted: true }>> {
+    const result = await this.api.workspace.deleteFederation({ federationId })
+    if (result.ok) void this.refresh()
+    return result
+  }
+
+  /**
    * Host-frame entry. Non-workspace frames are ignored so the runtime can
    * fan one host stream out to both object managers.
    * @param envelope - host stream envelope.
@@ -275,6 +309,7 @@ export class WorkspaceManager {
     return {
       items: this.itemViews(),
       archivedSessionIds: this.archivedSessionIds,
+      federations: this.federations,
       state: this.state,
       phase: this.phase,
       error: this.error,
