@@ -12,6 +12,7 @@ import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
 // cordis Context merge (via dsh-agent) must not enter client aggregates.
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { RpcId, RpcRequest, RpcResponse } from './rpc.ts'
+import type { FederationId } from './workspace.ts'
 import type { ToolEventView } from './events.ts'
 import type { WorkspaceId } from './workspace.ts'
 
@@ -271,6 +272,8 @@ export interface SessionsApi {
     sessionId?: SessionId
     agentPreset?: string
     additionalRoots?: string[]
+    /** Claim a durable federation identity instead of workspaceId/cwd. */
+    federationId?: FederationId
   }>):
   Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string }>>
 

@@ -206,6 +206,9 @@ describe('sessions domain schemas', () => {
       cwd: '/w',
       additionalRoots: Array.from({ length: 17 }, (_, index) => `/root-${index}`),
     })).toThrow()
+    // A federation claim is exclusive of every project-source field.
+    expect(sessionCreateRequestSchema.parse({ federationId: 'f1' }).federationId).toBe('f1')
+    expect(() => sessionCreateRequestSchema.parse({ cwd: '/w', federationId: 'f1' })).toThrow(/federationId is exclusive/)
     expect(sessionCreateValueSchema.parse({ sessionId: 's1' }).sessionId).toBe('s1')
     expect(sessionHistoryRequestSchema.parse({ sessionId: 's1', beforeSeq: 3, maxMessages: 5 }).beforeSeq).toBe(3)
     expect(() => sessionHistoryRequestSchema.parse({ sessionId: 's1', maxMessages: 0 })).toThrow()

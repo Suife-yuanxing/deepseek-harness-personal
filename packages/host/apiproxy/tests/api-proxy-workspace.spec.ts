@@ -64,6 +64,7 @@ async function harness(
   extras: {
     openPath?: (path: string, signal: AbortSignal) => Promise<void>
     canOpenPath?: () => boolean
+    federatedWorkspacesEnabled?: boolean
   } = {},
 ) {
   const ctx = new Context()
@@ -107,6 +108,9 @@ async function harness(
     cwd: root,
     ...extras.openPath === undefined ? {} : { openPath: extras.openPath },
     ...extras.canOpenPath === undefined ? {} : { canOpenPath: extras.canOpenPath },
+    ...extras.federatedWorkspacesEnabled === undefined
+      ? {}
+      : { federatedWorkspacesEnabled: extras.federatedWorkspacesEnabled },
   })
   return { api, ctx, storageDomain, root }
 }
@@ -630,6 +634,62 @@ describe('workspace federation handlers', () => {
     expect(missing.result).toMatchObject({
       ok: false,
       error: { code: 'federation-not-found', details: { federationId: 'no-such-federation' } },
+    })
+  })
+
+  it('claims a federation identity: primary cwd, member roots, primary attach — behind the switch', async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-fed-claim-')))
+    const off = await harness(root)
+    const a = stageDir(root, 'claim-a')
+    const b = stageDir(root, 'claim-b')
+    expectOk(await off.api.workspace.create(request({ path: a })))
+    const fed = expectOk(await off.api.workspace.createFederation(request({ memberPaths: [a, b] })))
+
+    // Switch OFF: a claim is refused before any session exists.
+    const refused = await off.api.sessions.create(request({
+      federationId: fed.federation.federationId as never,
+      sessionId: SessionId('fed-refused'),
+    }))
+    expect(refused.result).toMatchObject({ ok: false, error: { code: 'federation-disabled' } })
+    await off.ctx.fiber.dispose()
+
+    // Switch ON (a second harness over the same in-memory medium would share
+    // pool state only through the fixture; instead re-create the identity):
+    const on = await harness(realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-fed-on-'))), undefined, {
+      federatedWorkspacesEnabled: true,
+    })
+    const onPrimaryPath = stageDir(on.root, 'claim-a')
+    const onSecondaryPath = join(on.root, 'claim-b')
+    mkdirSync(onSecondaryPath)
+    expectOk(await on.api.workspace.create(request({ path: onPrimaryPath })))
+    const fedOn = expectOk(await on.api.workspace.createFederation(request({
+      memberPaths: [onPrimaryPath, onSecondaryPath],
+    })))
+
+    const sessionId = SessionId('fed-claimed')
+    expectOk(await on.api.sessions.create(request({
+      federationId: fedOn.federation.federationId as never, sessionId,
+    })))
+    const stored = on.ctx.sessions.get(sessionId)
+    expect(stored?.header.cwd).toBe(onPrimaryPath)
+    expect(stored?.header.additionalRoots).toEqual([onSecondaryPath])
+    // Primary attach groups the session under its owning workspace (fresh
+    // list, not the pre-attach view row).
+    const grouped = expectOk(await on.api.workspace.list(request({}))).items
+      .find(item => item.path === onPrimaryPath)
+    expect(grouped?.sessionIds.map(item => String(item))).toContain(String(sessionId))
+    await on.ctx.fiber.dispose()
+  })
+
+  it('answers an unknown federation claim with federation-not-found', async () => {
+    const { api } = await harness(undefined, undefined, { federatedWorkspacesEnabled: true })
+    const missing = await api.sessions.create(request({
+      federationId: 'ghost-federation' as never,
+      sessionId: SessionId('fed-ghost'),
+    }))
+    expect(missing.result).toMatchObject({
+      ok: false,
+      error: { code: 'federation-not-found', details: { federationId: 'ghost-federation' } },
     })
   })
 })

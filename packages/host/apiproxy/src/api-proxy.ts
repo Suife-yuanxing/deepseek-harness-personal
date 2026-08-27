@@ -2299,8 +2299,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       async create(request) {
         const sessionId = request.payload.sessionId ?? `session-${randomUUID()}` as SessionId
         // Gray switch FIRST, before any filesystem or registry effect: a
-        // disabled deployment must reject a roots claim without side effects.
-        if (request.payload.additionalRoots !== undefined && !federatedWorkspacesEnabled) {
+        // disabled deployment must reject a roots/federation claim untouched.
+        if ((request.payload.additionalRoots !== undefined || request.payload.federationId !== undefined)
+          && !federatedWorkspacesEnabled) {
           return err(request, {
             code: 'federation-disabled',
             message: 'federated workspaces are disabled in this deployment',
@@ -2308,6 +2309,23 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
         let workspace: Workspace | undefined
+
+        // A federation identity claim resolves to its primary root cwd plus
+        // the remaining members as the durable root list; validation happened
+        // at federation-create time, so no second filesystem pass runs here.
+        const claimedFederation = request.payload.federationId === undefined
+          ? undefined
+          : ctx.workspaceRegistry.listFederations().find(
+            candidate => candidate.id === request.payload.federationId,
+          )
+        if (request.payload.federationId !== undefined && claimedFederation === undefined) {
+          return err(request, {
+            code: 'federation-not-found',
+            message: `federation "${request.payload.federationId}" not found`,
+            details: { federationId: request.payload.federationId },
+          })
+        }
+
         if (request.payload.workspaceId !== undefined) {
           workspace = ctx.workspaceRegistry.get(brandWorkspaceId(request.payload.workspaceId))
           if (workspace === undefined) {
@@ -2318,12 +2336,17 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             })
           }
         }
-        const cwd = workspace?.path ?? request.payload.cwd ?? defaults.cwd
+        const cwd = workspace?.path
+          ?? claimedFederation?.memberPaths[0]
+          ?? request.payload.cwd
+          ?? defaults.cwd
         const requestedPreset = request.payload.agentPreset
-        // The explicit resolve step for the federation claim: canonical
-        // members only; an empty list collapses to an ordinary session.
+        // The explicit resolve step for a raw-roots claim: canonical members
+        // only; an empty list collapses to an ordinary session.
         let additionalRoots: readonly string[] | undefined
-        if (request.payload.additionalRoots !== undefined && request.payload.additionalRoots.length > 0) {
+        if (claimedFederation !== undefined) {
+          additionalRoots = claimedFederation.memberPaths.slice(1)
+        } else if (request.payload.additionalRoots !== undefined && request.payload.additionalRoots.length > 0) {
           try {
             additionalRoots = resolveAdditionalRoots(request.payload.additionalRoots, cwd)
           } catch (error: unknown) {
@@ -2375,6 +2398,30 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             message: `failed to create session "${sessionId}": ${String(error)}`,
             details: {},
           })
+        }
+        // A federated identity attaches to its PRIMARY member's workspace so
+        // sidebar grouping follows the plain-cwd convention; claiming a
+        // federation whose primary is not a registered workspace fails loud.
+        if (claimedFederation !== undefined) {
+          const primary = await ctx.workspaceRegistry.resolveByPath(claimedFederation.memberPaths[0] as string)
+          if (primary === undefined) {
+            return err(request, {
+              code: 'workspace-not-found',
+              message: `federation "${claimedFederation.id}" primary member ${JSON.stringify(
+                claimedFederation.memberPaths[0],
+              )} is not a registered workspace`,
+              details: { path: claimedFederation.memberPaths[0] as string },
+            })
+          }
+          try {
+            await primary.attachSession(sessionId)
+          } catch (error: unknown) {
+            return err(request, {
+              code: 'workspace-attach-failed',
+              message: `session "${sessionId}" was created but could not attach to the federation primary workspace "${primary.id}": ${String(error)}`,
+              details: { sessionId, workspaceId: primary.id },
+            })
+          }
         }
         if (workspace !== undefined) {
           try {

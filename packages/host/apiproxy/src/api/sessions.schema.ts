@@ -98,10 +98,12 @@ export const sessionSearchValueSchema = z.object({
   hasMore: z.boolean(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.search'>>>
 
-/** session.create request payload (at most one of workspaceId / cwd). */
+/** Session.create request payload (at most one of workspaceId / cwd / federationId). */
 export const sessionCreateRequestSchema = z.object({
   workspaceId: workspaceIdSchema.optional(),
   cwd: z.string().optional(),
+  /** Claim a durable federation identity instead of a bare project directory. */
+  federationId: z.string().min(1).optional(),
   /** Additional writable roots; gated by the deployment's federated-workspace switch host-side. */
   additionalRoots: z.array(z.string().min(1)).max(16).optional(),
   sessionId: sessionIdSchema.optional(),
@@ -109,6 +111,10 @@ export const sessionCreateRequestSchema = z.object({
 }).refine(
   payload => payload.workspaceId === undefined || payload.cwd === undefined,
   { message: 'session.create accepts workspaceId or cwd, not both' },
+).refine(
+  payload => payload.federationId === undefined
+    || (payload.workspaceId === undefined && payload.cwd === undefined && payload.additionalRoots === undefined),
+  { message: 'federationId is exclusive of workspaceId, cwd, and additionalRoots' },
 ) satisfies z.ZodType<Wire<RequestPayload<'session.create'>>>
 
 /** session.create response value. */
