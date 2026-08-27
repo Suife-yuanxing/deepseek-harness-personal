@@ -7,10 +7,22 @@
 import { z } from 'zod'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
-import type { WorkspaceView } from './workspace.ts'
+import type { FederationView, WorkspaceView } from './workspace.ts'
 import { sessionIdSchema, workspaceIdSchema } from './sessions.schema.ts'
 
 export { workspaceIdSchema } from './sessions.schema.ts'
+
+/** FederationId brand cast — domain-local (no session-domain DAG dependency). */
+export const federationIdSchema = z.string().min(1) as unknown as z.ZodType<import('./workspace.ts').FederationId>
+
+/** FederationView row of every federation.* response. */
+export const federationViewSchema = z.object({
+  federationId: federationIdSchema,
+  title: z.string(),
+  memberPaths: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+}) satisfies z.ZodType<Wire<FederationView>>
 
 /** WorkspaceView row of every workspace.* response. */
 export const workspaceViewSchema = z.object({
@@ -29,6 +41,7 @@ export const workspaceListRequestSchema = z.object({}) satisfies z.ZodType<Wire<
 export const workspaceListValueSchema = z.object({
   items: z.array(workspaceViewSchema),
   archivedSessionIds: z.array(sessionIdSchema),
+  federations: z.array(federationViewSchema),
 }) satisfies z.ZodType<Wire<ResponseValue<'workspace.list'>>>
 
 /** workspace.create request payload: the existing directory to adopt. */
@@ -98,3 +111,50 @@ export const workspaceArchiveSessionRequestSchema = z.object({
 export const workspaceArchiveSessionValueSchema = z.object({
   archivedSessionIds: z.array(sessionIdSchema),
 }) satisfies z.ZodType<Wire<ResponseValue<'workspace.archiveSession'>>>
+
+/** workspace.createFederation request payload (title omitted = joined basenames). */
+export const workspaceCreateFederationRequestSchema = z.object({
+  title: z.string().optional(),
+  memberPaths: z.array(z.string().min(1)).min(2).max(16),
+}).refine(
+  payload => payload.title === undefined || payload.title.trim() !== '',
+  { message: 'federation title must be a non-blank string' },
+) satisfies z.ZodType<Wire<RequestPayload<'workspace.createFederation'>>>
+
+/** workspace.createFederation response value. */
+export const workspaceCreateFederationValueSchema = z.object({
+  federation: federationViewSchema,
+  created: z.boolean(),
+}) satisfies z.ZodType<Wire<ResponseValue<'workspace.createFederation'>>>
+
+/** workspace.listFederations request payload (empty object literal). */
+export const workspaceListFederationsRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'workspace.listFederations'>>>
+
+/** workspace.listFederations response value. */
+export const workspaceListFederationsValueSchema = z.object({
+  items: z.array(federationViewSchema),
+}) satisfies z.ZodType<Wire<ResponseValue<'workspace.listFederations'>>>
+
+/** workspace.renameFederation request payload (same title rules, schema-enforced non-blank). */
+export const workspaceRenameFederationRequestSchema = z.object({
+  federationId: federationIdSchema,
+  title: z.string(),
+}).refine(
+  payload => payload.title.trim() !== '',
+  { message: 'workspace.renameFederation requires a non-blank title' },
+) satisfies z.ZodType<Wire<RequestPayload<'workspace.renameFederation'>>>
+
+/** workspace.renameFederation response value. */
+export const workspaceRenameFederationValueSchema = z.object({
+  federation: federationViewSchema,
+}) satisfies z.ZodType<Wire<ResponseValue<'workspace.renameFederation'>>>
+
+/** workspace.deleteFederation request payload. */
+export const workspaceDeleteFederationRequestSchema = z.object({
+  federationId: federationIdSchema,
+}) satisfies z.ZodType<Wire<RequestPayload<'workspace.deleteFederation'>>>
+
+/** workspace.deleteFederation response value (unknown id is an idempotent success). */
+export const workspaceDeleteFederationValueSchema = z.object({
+  deleted: z.literal(true),
+}) satisfies z.ZodType<Wire<ResponseValue<'workspace.deleteFederation'>>>

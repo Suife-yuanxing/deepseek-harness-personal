@@ -81,13 +81,30 @@ function scriptedApi(overrides: {
       ...overrides.host,
     },
     workspace: {
-      list: r => ok(r, { items: [], archivedSessionIds: [] }),
+      list: r => ok(r, { items: [], archivedSessionIds: [], federations: [] }),
       create: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' }, created: true }),
       rename: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' } }),
       delete: r => ok(r, { deleted: true as const }),
       insertBefore: r => ok(r, { workspaceIds: [r.payload.workspaceId] }),
       insertSessionBefore: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' } }),
       archiveSession: r => ok(r, { archivedSessionIds: [r.payload.sessionId] }),
+      createFederation: r => ok(r, {
+        federation: {
+          federationId: 'f1' as never,
+          title: (r.payload.memberPaths ?? []).map(p => p.split(/[\\/]/).pop()).join(' + '),
+          memberPaths: r.payload.memberPaths ?? [],
+          createdAt: '0',
+          updatedAt: '0',
+        },
+        created: true as const,
+      }),
+      listFederations: r => ok(r, {
+        items: [{ federationId: 'f1' as never, title: 'a + b', memberPaths: ['/a', '/b'], createdAt: '0', updatedAt: '0' }],
+      }),
+      renameFederation: r => ok(r, {
+        federation: { federationId: r.payload.federationId, title: r.payload.title, memberPaths: ['/a', '/b'], createdAt: '0', updatedAt: '0' },
+      }),
+      deleteFederation: r => ok(r, { deleted: true as const }),
     },
     skills: { list: r => ok(r, { skills: [] }), ...overrides.skills },
     agentPresets: {
@@ -427,12 +444,31 @@ describe('workspace domain round trip', () => {
   it('routes both workspace methods through their handler rows and value schemas', async () => {
     const c = client(scriptedApi())
     const list = await c.workspace.list({})
-    expect(list.result).toEqual({ ok: true, value: { items: [], archivedSessionIds: [] } })
+    expect(list.result).toEqual({ ok: true, value: { items: [], archivedSessionIds: [], federations: [] } })
     const created = await c.workspace.create({ path: '/t' })
     expect(created.result.ok).toBe(true)
     if (created.result.ok) expect(created.result.value.created).toBe(true)
     const archivedResponse = await c.workspace.archiveSession({ sessionId: 's-arch' as never })
     expect(archivedResponse.result).toEqual({ ok: true, value: { archivedSessionIds: ['s-arch'] } })
+  })
+
+  it('routes the federation methods through their handler rows and value schemas', async () => {
+    const c = client(scriptedApi())
+    const created = await c.workspace.createFederation({ memberPaths: ['/a', '/b'] })
+    expect(created.result.ok).toBe(true)
+    if (created.result.ok) {
+      expect(created.result.value.created).toBe(true)
+      expect(created.result.value.federation.title).toContain(' + ')
+    }
+    const listed = await c.workspace.listFederations({})
+    expect(listed.result).toEqual({ ok: true, value: { items: [expect.anything()] } })
+    if (listed.result.ok) {
+      const id = listed.result.value.items[0]!.federationId
+      const renamed = await c.workspace.renameFederation({ federationId: id, title: 'Renamed' })
+      expect(renamed.result.ok).toBe(true)
+      const removed = await c.workspace.deleteFederation({ federationId: id })
+      expect(removed.result).toEqual({ ok: true, value: { deleted: true } })
+    }
   })
 
   it('rejects a pathless create payload at the handler schema', async () => {

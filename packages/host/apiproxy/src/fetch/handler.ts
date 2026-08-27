@@ -36,11 +36,15 @@ import {
 } from '../api/host.schema.ts'
 import {
   workspaceArchiveSessionRequestSchema,
+  workspaceCreateFederationRequestSchema,
   workspaceCreateRequestSchema,
+  workspaceDeleteFederationRequestSchema,
   workspaceDeleteRequestSchema,
   workspaceInsertBeforeRequestSchema,
   workspaceInsertSessionBeforeRequestSchema,
+  workspaceListFederationsRequestSchema,
   workspaceListRequestSchema,
+  workspaceRenameFederationRequestSchema,
   workspaceRenameRequestSchema,
 } from '../api/workspace.schema.ts'
 import { skillListRequestSchema } from '../api/skills.schema.ts'
@@ -116,6 +120,10 @@ const UNARY_ROUTES: UnaryRoutes = {
   'workspace.insertBefore': { schema: workspaceInsertBeforeRequestSchema, invoke: (api, r) => api.workspace.insertBefore(r) },
   'workspace.insertSessionBefore': { schema: workspaceInsertSessionBeforeRequestSchema, invoke: (api, r) => api.workspace.insertSessionBefore(r) },
   'workspace.archiveSession': { schema: workspaceArchiveSessionRequestSchema, invoke: (api, r) => api.workspace.archiveSession(r) },
+  'workspace.createFederation': { schema: workspaceCreateFederationRequestSchema, invoke: (api, r) => api.workspace.createFederation(r) },
+  'workspace.listFederations': { schema: workspaceListFederationsRequestSchema, invoke: (api, r) => api.workspace.listFederations(r) },
+  'workspace.renameFederation': { schema: workspaceRenameFederationRequestSchema, invoke: (api, r) => api.workspace.renameFederation(r) },
+  'workspace.deleteFederation': { schema: workspaceDeleteFederationRequestSchema, invoke: (api, r) => api.workspace.deleteFederation(r) },
   'skill.list': { schema: skillListRequestSchema, invoke: (api, r) => api.skills.list(r) },
   'agentPreset.list': { schema: agentPresetListRequestSchema, invoke: (api, r) => api.agentPresets.list(r) },
   'agentPreset.select': { schema: agentPresetSelectRequestSchema, invoke: (api, r) => api.agentPresets.select(r) },

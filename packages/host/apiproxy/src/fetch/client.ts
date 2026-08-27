@@ -33,11 +33,15 @@ import {
 } from '../api/sessions.schema.ts'
 import {
   workspaceArchiveSessionValueSchema,
+  workspaceCreateFederationValueSchema,
   workspaceCreateValueSchema,
+  workspaceDeleteFederationValueSchema,
   workspaceDeleteValueSchema,
   workspaceInsertBeforeValueSchema,
   workspaceInsertSessionBeforeValueSchema,
+  workspaceListFederationsValueSchema,
   workspaceListValueSchema,
+  workspaceRenameFederationValueSchema,
   workspaceRenameValueSchema,
 } from '../api/workspace.schema.ts'
 import { skillListValueSchema } from '../api/skills.schema.ts'
@@ -120,6 +124,10 @@ export interface IApiClient {
     insertBefore(payload: RequestPayload<'workspace.insertBefore'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.insertBefore'>>>
     insertSessionBefore(payload: RequestPayload<'workspace.insertSessionBefore'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.insertSessionBefore'>>>
     archiveSession(payload: RequestPayload<'workspace.archiveSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.archiveSession'>>>
+    createFederation(payload: RequestPayload<'workspace.createFederation'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.createFederation'>>>
+    listFederations(payload: RequestPayload<'workspace.listFederations'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.listFederations'>>>
+    renameFederation(payload: RequestPayload<'workspace.renameFederation'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.renameFederation'>>>
+    deleteFederation(payload: RequestPayload<'workspace.deleteFederation'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.deleteFederation'>>>
   }
   skills: {
     list(payload: RequestPayload<'skill.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.list'>>>
@@ -198,6 +206,10 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'workspace.insertBefore': workspaceInsertBeforeValueSchema,
   'workspace.insertSessionBefore': workspaceInsertSessionBeforeValueSchema,
   'workspace.archiveSession': workspaceArchiveSessionValueSchema,
+  'workspace.createFederation': workspaceCreateFederationValueSchema,
+  'workspace.listFederations': workspaceListFederationsValueSchema,
+  'workspace.renameFederation': workspaceRenameFederationValueSchema,
+  'workspace.deleteFederation': workspaceDeleteFederationValueSchema,
   'skill.list': skillListValueSchema,
   'agentPreset.list': agentPresetListValueSchema,
   'agentPreset.select': agentPresetSelectValueSchema,
@@ -451,6 +463,10 @@ export abstract class AbstractApiClient implements IApiClient {
     insertBefore: (payload, signal) => this.callUnary('workspace.insertBefore', payload, signal),
     insertSessionBefore: (payload, signal) => this.callUnary('workspace.insertSessionBefore', payload, signal),
     archiveSession: (payload, signal) => this.callUnary('workspace.archiveSession', payload, signal),
+    createFederation: (payload, signal) => this.callUnary('workspace.createFederation', payload, signal),
+    listFederations: (payload, signal) => this.callUnary('workspace.listFederations', payload, signal),
+    renameFederation: (payload, signal) => this.callUnary('workspace.renameFederation', payload, signal),
+    deleteFederation: (payload, signal) => this.callUnary('workspace.deleteFederation', payload, signal),
   }
 
   readonly skills: IApiClient['skills'] = {

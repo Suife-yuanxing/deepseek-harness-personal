@@ -17,6 +17,22 @@ import type { RpcRequest, RpcResponse } from './rpc.ts'
  */
 export type WorkspaceId = Branded<'WorkspaceId'>
 
+/** Wire-side federation id brand (mirror of the registry-side brand string). */
+export type FederationId = Branded<'FederationId'>
+
+/**
+ * One federation row: the record projection every federation.* value carries
+ * (the ordered member list is a wire copy of the durable creation order).
+ */
+export interface FederationView {
+  federationId: FederationId
+  title: string
+  /** Canonical member directories in creation order; `[0]` is the primary root. */
+  memberPaths: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 /** One workspace row: the record projection every workspace.* value carries. */
 export interface WorkspaceView {
   workspaceId: WorkspaceId
@@ -43,7 +59,11 @@ export interface WorkspaceApi {
    * `host/archived-sessions-changed`). Archived sessions stay in their
    * workspace's `sessionIds` account; grouping surfaces hide them.
    */
-  list(request: RpcRequest<{}>): Promise<RpcResponse<{ items: WorkspaceView[]; archivedSessionIds: SessionId[] }>>
+  list(request: RpcRequest<{}>): Promise<RpcResponse<{
+    items: WorkspaceView[]
+    archivedSessionIds: SessionId[]
+    federations: FederationView[]
+  }>>
 
   /**
    * Creates (or idempotently resolves) a workspace over an EXISTING directory
@@ -106,4 +126,36 @@ export interface WorkspaceApi {
    */
   archiveSession(request: RpcRequest<{ sessionId: SessionId }>):
   Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
+
+  /**
+   * Creates a federation over two or more existing directories. Every member
+   * canonicalizes to an existing directory, pairwise distinct after
+   * canonicalization; violations fail with `federation-invalid-members`. The
+   * title defaults to the members' basenames joined with `' + '`; an
+   * explicit title is trimmed, non-empty, and unique among federations — a
+   * held title fails with `federation-name-conflict`.
+   */
+  createFederation(request: RpcRequest<{ title?: string; memberPaths: string[] }>):
+  Promise<RpcResponse<{ federation: FederationView; created: boolean }>>
+
+  /**
+   * Lists every federation in durable (creation) order.
+   */
+  listFederations(request: RpcRequest<{}>): Promise<RpcResponse<{ items: FederationView[] }>>
+
+  /**
+   * Renames one federation. The same non-blank/unique title rules apply;
+   * renaming to the current title is a no-op success. An unknown id fails
+   * with `federation-not-found`; a held title with `federation-name-conflict`.
+   */
+  renameFederation(request: RpcRequest<{ federationId: FederationId; title: string }>):
+  Promise<RpcResponse<{ federation: FederationView }>>
+
+  /**
+   * Removes one federation registration. Member directories and session logs
+   * are untouched. Unknown ids are an idempotent success (`deleted: true`
+   * always — the shape mirrors workspace.delete's contract wording).
+   */
+  deleteFederation(request: RpcRequest<{ federationId: FederationId }>):
+  Promise<RpcResponse<{ deleted: true }>>
 }

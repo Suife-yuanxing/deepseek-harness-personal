@@ -20,12 +20,15 @@ import {
   hostListDirectoryRequestSchema, hostListDirectoryValueSchema,
 } from '../src/api/host.schema.ts'
 import {
+  federationViewSchema,
   workspaceArchiveSessionRequestSchema, workspaceArchiveSessionValueSchema,
+  workspaceCreateFederationRequestSchema, workspaceCreateFederationValueSchema,
   workspaceCreateRequestSchema, workspaceCreateValueSchema, workspaceIdSchema,
-  workspaceDeleteRequestSchema, workspaceDeleteValueSchema,
+  workspaceDeleteFederationValueSchema, workspaceDeleteRequestSchema, workspaceDeleteValueSchema,
   workspaceInsertBeforeRequestSchema, workspaceInsertBeforeValueSchema,
   workspaceInsertSessionBeforeRequestSchema, workspaceInsertSessionBeforeValueSchema,
-  workspaceListRequestSchema, workspaceListValueSchema,
+  workspaceListFederationsValueSchema, workspaceListRequestSchema, workspaceListValueSchema,
+  workspaceRenameFederationRequestSchema, workspaceRenameFederationValueSchema,
   workspaceRenameRequestSchema, workspaceRenameValueSchema, workspaceViewSchema,
 } from '../src/api/workspace.schema.ts'
 import { skillEntrySchema, skillListRequestSchema, skillListValueSchema } from '../src/api/skills.schema.ts'
@@ -364,8 +367,29 @@ describe('workspace domain schemas', () => {
     expect(workspaceViewSchema.parse(view).sessionIds).toEqual(['s1'])
     expect(() => workspaceViewSchema.parse({ ...view, sessionIds: 's1' })).toThrow()
     expect(workspaceListRequestSchema.parse({})).toEqual({})
-    expect(workspaceListValueSchema.parse({ items: [view], archivedSessionIds: ['s1'] }).items).toHaveLength(1)
-    expect(() => workspaceListValueSchema.parse({ items: [view] })).toThrow()
+    expect(workspaceListValueSchema.parse({ items: [view], archivedSessionIds: ['s1'], federations: [] }).items).toHaveLength(1)
+    expect(() => workspaceListValueSchema.parse({ items: [view], archivedSessionIds: ['s1'] })).toThrow()
+  })
+
+  const fedView = {
+    federationId: 'f1', title: 'a + b', memberPaths: ['/a', '/b'],
+    createdAt: '2026-08-28T00:00:00.000Z', updatedAt: '2026-08-28T00:00:00.000Z',
+  }
+
+  it('federation schemas validate the view row and every payload/value shape', () => {
+    expect(federationViewSchema.parse(fedView).memberPaths).toEqual(['/a', '/b'])
+    expect(() => federationViewSchema.parse({ ...fedView, memberPaths: ['/a'] })).not.toThrow()
+
+    expect(workspaceCreateFederationRequestSchema.parse({ memberPaths: ['/a', '/b'] }).title).toBeUndefined()
+    expect(() => workspaceCreateFederationRequestSchema.parse({ memberPaths: ['/only'] })).toThrow()
+    expect(() => workspaceCreateFederationRequestSchema.parse({ title: '   ', memberPaths: ['/a', '/b'] })).toThrow(/non-blank/)
+    expect(workspaceCreateFederationValueSchema.parse({ federation: fedView, created: true }).created).toBe(true)
+
+    expect(workspaceListFederationsValueSchema.parse({ items: [] }).items).toEqual([])
+    expect(workspaceRenameFederationRequestSchema.parse({ federationId: 'f1', title: 'x' }).federationId).toBe('f1')
+    expect(() => workspaceRenameFederationRequestSchema.parse({ federationId: 'f1', title: ' ' })).toThrow(/non-blank/)
+    expect(workspaceRenameFederationValueSchema.parse({ federation: fedView }).federation.title).toBe('a + b')
+    expect(workspaceDeleteFederationValueSchema.parse({ deleted: true }).deleted).toBe(true)
   })
 
   it('archiveSession request/value carry the id and the full updated set', () => {

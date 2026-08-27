@@ -50,6 +50,8 @@ export interface RpcErrorDetailsMap {
   'workspace-not-found': { workspaceId: string }
   'workspace-invalid-path': { path: string }
   'workspace-name-conflict': { name: string }
+  'federation-not-found': { federationId: string }
+  'federation-name-conflict': { title: string }
   'workspace-move-invalid': { workspaceId: string; sessionId: SessionId; beforeSessionId?: SessionId }
   'directory-unreadable': { path: string }
   'directory-exists': { path: string }

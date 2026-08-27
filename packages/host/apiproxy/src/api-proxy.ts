@@ -23,9 +23,11 @@ import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-se
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
 import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
-import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
+import type { Workspace, WorkspaceRecord, Federation } from '@deepseek-ai/dsh-workspace'
 import {
   workspaceDomainState, workspaceRecord, WorkspaceId as brandWorkspaceId,
+  FederationId as brandFederationId,
+  FederationInvalidMembersError, FederationNameConflictError, FederationUnknownError,
   WorkspaceMoveInvalidError, WorkspaceOrderInvalidError, WorkspaceUnknownSessionError,
 } from '@deepseek-ai/dsh-workspace'
 // Type-only: brings the `ctx.tools` Context merge into this program (viewFor reads presenters).
@@ -42,6 +44,7 @@ import type {
   ModelReasoning, MuxFrame, PromptContentPart, QuestionResponsePayload, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem,
   QueuedInboxItem, SessionSummary, SettingsNamespaceView, SubagentAddress, JobView, ToolEventView,
   WorkspaceId, WorkspaceView,
+  FederationView,
 } from './api/index.ts'
 import {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
@@ -1178,6 +1181,19 @@ function workspaceView(workspace: Workspace): WorkspaceView {
     sessionIds: [...workspace.sessionIds],
     createdAt: workspace.createdAt,
     updatedAt: workspace.updatedAt,
+  }
+}
+
+/** Wire projection of one federation snapshot (the federation.* value row). */
+function federationView(federation: Federation): FederationView {
+  return {
+    // Registry-side and wire-side FederationId share one brand string, so the
+    // opaque id crosses this boundary without any runtime transformation.
+    federationId: federation.id,
+    title: federation.title,
+    memberPaths: [...federation.memberPaths],
+    createdAt: federation.createdAt,
+    updatedAt: federation.updatedAt,
   }
 }
 
@@ -2949,6 +2965,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         return Promise.resolve(ok(request, {
           items: ctx.workspaceRegistry.list().map(workspaceView),
           archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds],
+          federations: ctx.workspaceRegistry.listFederations().map(federationView),
         }))
       },
 
@@ -3062,6 +3079,77 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
         return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
+      },
+
+      async createFederation(request) {
+        const { payload } = request
+        try {
+          const federation = await ctx.workspaceRegistry.createFederation({
+            title: payload.title,
+            memberPaths: payload.memberPaths,
+          })
+          return ok(request, { federation: federationView(federation), created: true })
+        } catch (error: unknown) {
+          if (error instanceof FederationInvalidMembersError) {
+            return err(request, {
+              code: 'federation-invalid-members',
+              message: error.message,
+              details: { path: error.path },
+            })
+          }
+          if (error instanceof FederationNameConflictError) {
+            return err(request, {
+              code: 'federation-name-conflict',
+              message: error.message,
+              details: { title: error.title },
+            })
+          }
+          throw error
+        }
+      },
+
+      listFederations(request) {
+        return Promise.resolve(ok(request, {
+          items: ctx.workspaceRegistry.listFederations().map(federationView),
+        }))
+      },
+
+      async renameFederation(request) {
+        const { federationId, title } = request.payload
+        const id = brandFederationId(federationId)
+        if (!ctx.workspaceRegistry.listFederations().some(entry => entry.id === id)) {
+          return err(request, {
+            code: 'federation-not-found',
+            message: `federation "${federationId}" not found`,
+            details: { federationId },
+          })
+        }
+        try {
+          const renamed = await ctx.workspaceRegistry.renameFederation(id, title)
+          return ok(request, { federation: federationView(renamed) })
+        } catch (error: unknown) {
+          if (error instanceof FederationUnknownError) {
+            return err(request, {
+              code: 'federation-not-found',
+              message: error.message,
+              details: { federationId },
+            })
+          }
+          if (error instanceof FederationNameConflictError) {
+            return err(request, {
+              code: 'federation-name-conflict',
+              message: error.message,
+              details: { title: error.title },
+            })
+          }
+          throw error
+        }
+      },
+
+      async deleteFederation(request) {
+        // Idempotent by contract: an unknown id resolves success without writing.
+        await ctx.workspaceRegistry.deleteFederation(brandFederationId(request.payload.federationId))
+        return ok(request, { deleted: true as const })
       },
     },
 

@@ -568,3 +568,68 @@ describe('Host Workspace increments', () => {
     abort.abort()
   })
 })
+
+describe('workspace federation handlers', () => {
+  it('creates over validated members, lists in order, renames, and deletes idempotently', async () => {
+    const { api, root } = await harness()
+    const a = stageDir(root, 'fed-a')
+    const b = stageDir(root, 'fed-b')
+
+    const created = expectOk(await api.workspace.createFederation(request({ memberPaths: [a, b] })))
+    expect(created.created).toBe(true)
+    expect(created.federation.title).toBe('fed-a + fed-b')
+    expect(created.federation.memberPaths).toEqual([a, b])
+
+    // The order rides the workspace.list value beside items and the archive set.
+    const listed = expectOk(await api.workspace.list(request({})))
+    expect(listed.federations.map(entry => entry.federationId)).toEqual([created.federation.federationId])
+    expect(expectOk(await api.workspace.listFederations(request({}))).items).toHaveLength(1)
+
+    const renamed = expectOk(await api.workspace.renameFederation(request({
+      federationId: created.federation.federationId, title: 'Renamed',
+    })))
+    expect(renamed.federation.title).toBe('Renamed')
+    expect(renamed.federation.updatedAt >= renamed.federation.createdAt).toBe(true)
+
+    const removed = await api.workspace.deleteFederation(request({ federationId: created.federation.federationId }))
+    expect(removed.result).toEqual({ ok: true, value: { deleted: true } })
+    const afterDelete = await api.workspace.deleteFederation(request({ federationId: created.federation.federationId }))
+    expect(afterDelete.result).toEqual({ ok: true, value: { deleted: true } })
+  })
+
+  it('maps membership validation and name conflicts to their wire codes', async () => {
+    const { api, root } = await harness()
+    const a = stageDir(root, 'conf-a')
+    const b = stageDir(root, 'conf-b')
+
+    const invalidMembers = await api.workspace.createFederation(request({
+      memberPaths: [a, join(root, 'missing-directory')],
+    }))
+    expect(invalidMembers.result).toMatchObject({
+      ok: false,
+      error: { code: 'federation-invalid-members', details: { path: join(root, 'missing-directory') } },
+    })
+
+    const c = stageDir(root, 'conf-c')
+    expectOk(await api.workspace.createFederation(request({ title: 'Unique', memberPaths: [a, b] })))
+    const conflict = await api.workspace.createFederation(request({ title: 'Unique', memberPaths: [b, c] }))
+    expect(conflict.result).toMatchObject({
+      ok: false,
+      error: { code: 'federation-name-conflict', details: { title: 'Unique' } },
+    })
+
+    // The duplicate-title reject left no record behind.
+    expect(expectOk(await api.workspace.listFederations(request({}))).items).toHaveLength(1)
+  })
+
+  it('answers rename on an unknown federation with federation-not-found', async () => {
+    const { api } = await harness()
+    const missing = await api.workspace.renameFederation(request({
+      federationId: 'no-such-federation' as never, title: 'x',
+    }))
+    expect(missing.result).toMatchObject({
+      ok: false,
+      error: { code: 'federation-not-found', details: { federationId: 'no-such-federation' } },
+    })
+  })
+})
