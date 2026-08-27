@@ -80,7 +80,7 @@ export function workspaceListState(): WorkspaceListState {
   return {
     items: [],
     archivedSessionIds: [],
-    federations: [],
+    federations: [], federatedWorkspacesEnabled: true,
     state: 'idle',
     phase: 'ready',
     error: null,

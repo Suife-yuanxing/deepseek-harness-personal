@@ -130,7 +130,7 @@ async function scopedBench(register?: (inputTriggers: InputTriggerService) => vo
     })),
     useWorkspaces: bindSnapshotSelector(createSnapshotStore({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-      federations: [],
+      federations: [], federatedWorkspacesEnabled: true,
       baselinesReady: true, recentWorkspaceId: undefined,
     })),
     useProjection: (() => undefined),

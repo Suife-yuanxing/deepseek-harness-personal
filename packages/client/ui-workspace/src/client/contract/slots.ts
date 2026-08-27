@@ -135,6 +135,14 @@ export type WorkspaceBrowserInjected = DirectoryPickingInjected & {
   insertSessionBefore: (workspaceId: WorkspaceId, sessionId: SessionId, beforeSessionId?: SessionId) => Promise<void>
   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  /**
+   * Create a federation over two or more registered workspace directories.
+   * Shared with the pick flow's carrier; the browser surface (add-only) does
+   * not render federation rows but carries the same completion.
+   */
+  createFederation: (input: { title?: string; memberPaths: string[] }) => Promise<FederationView>
+  /** Start (and open) a session claimed from a durable federation identity. */
+  startFederatedSession: (federationId: FederationId) => Promise<void>
 }
 
 /** Full browser props: shell owner share + viewing store + injected actions + the locale seat. */

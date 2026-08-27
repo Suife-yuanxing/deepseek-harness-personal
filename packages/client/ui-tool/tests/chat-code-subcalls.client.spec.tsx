@@ -150,7 +150,7 @@ async function bench(snapshot: ConversationSnapshot) {
   const workspaces = {
     list: createSnapshotStore<WorkspaceListState>({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-      federations: [],
+      federations: [], federatedWorkspacesEnabled: true,
       baselinesReady: true, recentWorkspaceId: undefined,
     }),
     startSession: vi.fn(),

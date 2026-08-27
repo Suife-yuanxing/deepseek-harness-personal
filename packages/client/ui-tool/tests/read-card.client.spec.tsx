@@ -268,7 +268,7 @@ describe('DetailsPanel Output section (read)', () => {
       })
     const workspaces = createSnapshotStore<WorkspaceListState>({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-      federations: [],
+      federations: [], federatedWorkspacesEnabled: true,
       baselinesReady: true, recentWorkspaceId: undefined,
     })
     return render(

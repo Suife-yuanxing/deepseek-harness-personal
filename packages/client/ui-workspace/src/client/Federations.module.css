@@ -28,6 +28,11 @@
 
 /* ---- create-federation panel ---- */
 
+/* Dialog footer buttons share the pick flow dialog's width floor geometry. */
+.modalAction {
+  min-width: 72px;
+}
+
 .memberList {
   display: flex;
   flex-direction: column;
@@ -35,6 +40,10 @@
   max-height: 280px;
   overflow-y: auto;
   margin-top: 12px;
+  /* The panel scrolls on an elevated rung (bg-layer-2 below): rebind the
+   * scrollbar indirection to the l2 pair per ui-theme's scrollbar contract. */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
 .memberRow {

@@ -78,7 +78,7 @@ function mountFrame() {
   }) as never
   const workspaceState: WorkspaceListState = {
     items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-    federations: [],
+    federations: [], federatedWorkspacesEnabled: true,
     baselinesReady: baselinesReady.current, recentWorkspaceId: undefined,
   }
   const element = () => (

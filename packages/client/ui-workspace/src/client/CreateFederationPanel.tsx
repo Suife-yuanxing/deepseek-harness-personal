@@ -107,16 +107,19 @@ export function CreateFederationPanel({
         </>
       )}
     >
-      <Input
-        className={css.titleField}
-        placeholder={t('federation.field.title')}
-        value={effectiveTitle}
-        aria-label={t('federation.field.title')}
-        onChange={(event) => {
-          setTitleTouched(true)
-          setTitleDraft(event.target.value)
-        }}
-      />
+      {/* The wrapper owns spacing: the Input atom's exact-optional className
+          member rejects a possibly-unset index access under strict flags. */}
+      <div className={css.titleField}>
+        <Input
+          placeholder={t('federation.field.title')}
+          value={effectiveTitle}
+          aria-label={t('federation.field.title')}
+          onChange={(event) => {
+            setTitleTouched(true)
+            setTitleDraft(event.target.value)
+          }}
+        />
+      </div>
       <div className={css.memberList} role="group">
         {workspaces.length === 0 && <div className={css.memberPath}>{t('empty.none')}</div>}
         {workspaces.map((workspace) => {

@@ -755,6 +755,8 @@ export function WorkspaceBrowser({
   archiveSession,
   insertSessionBefore,
   createWorkspace,
+  createFederation,
+  startFederatedSession,
   searchSessions,
   searchResultLimit,
   useDirectoryFlow,
@@ -1073,6 +1075,8 @@ export function WorkspaceBrowser({
           anchorRef={wsPlusRef}
           useWorkspaces={useWorkspaces}
           createWorkspace={createWorkspace}
+          createFederation={createFederation}
+          startFederatedSession={startFederatedSession}
           useDirectoryFlow={useDirectoryFlow}
           renderDirectoryFlow={owner => renderSlot('sidebar.workspaces.directoryFlow', owner)}
           addOnly

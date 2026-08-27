@@ -99,6 +99,11 @@ export function apply(ctx: ClientContext): void {
       await ctx.workspaces.insertSessionBefore(workspaceId, sessionId, beforeSessionId)
     },
     createWorkspace: input => ctx.workspaces.create(input),
+    createFederation: input => ctx.workspaces.createFederation(input),
+    startFederatedSession: async (federationId) => {
+      const sessionId = await ctx.workspaces.startFederatedSession(federationId)
+      ctx.sessions.open(sessionId)
+    },
     hooks: { directoryFlow: browserFlowSource },
   })
   const pickerInjected = (): WorkspacePickerInjected => ({

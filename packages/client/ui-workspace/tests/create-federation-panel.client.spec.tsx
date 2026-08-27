@@ -50,11 +50,11 @@ function mount({ workspaces = [workspace('alpha', 'Alpha'), workspace('beta', 'B
 describe('CreateFederationPanel', () => {
   it('keeps confirm disabled below two members with its hint visible', () => {
     mount()
-    expect(screen.getByRole('button', { name: '创建' }).disabled).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '创建' }).disabled).toBe(true)
     expect(screen.getByText('至少选择两个文件夹')).toBeTruthy()
     // One member is still not enough.
     fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
-    expect(screen.getByRole('button', { name: '创建' }).disabled).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '创建' }).disabled).toBe(true)
     expect(screen.getByText('至少选择两个文件夹')).toBeTruthy()
   })
 

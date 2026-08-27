@@ -375,12 +375,12 @@ describe('WorkspacePicker', () => {
       fireEvent.click(screen.getByRole('menuitem', { name: '新建联合工作区…' }))
       expect(screen.getByRole('dialog', { name: '新建联合工作区' })).toBeTruthy()
       // <2 members keeps confirm disabled with its hint.
-      expect(screen.getByRole('button', { name: '创建' }).disabled).toBe(true)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '创建' }).disabled).toBe(true)
       expect(screen.getByText('至少选择两个文件夹')).toBeTruthy()
       // Two checks make the default title from basenames; create carries them in check order.
       fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
       fireEvent.click(screen.getByRole('checkbox', { name: /Beta/ }))
-      expect(screen.getByRole('button', { name: '创建' }).disabled).toBe(false)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '创建' }).disabled).toBe(false)
       fireEvent.click(screen.getByRole('button', { name: '创建' }))
       await waitFor(() => {
         expect(b.createFederation).toHaveBeenCalledWith({ title: 'alpha + beta', memberPaths: ['/projects/alpha', '/projects/beta'] })

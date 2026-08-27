@@ -151,7 +151,7 @@ function bench(over?: BenchOptions) {
     })),
     useWorkspaces: bindSnapshotSelector(createSnapshotStore({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-      federations: [],
+      federations: [], federatedWorkspacesEnabled: true,
       baselinesReady: true, recentWorkspaceId: undefined,
     })),
     useProjection: ((key: string, selector?: (v: unknown) => unknown) =>
