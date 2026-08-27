@@ -39,8 +39,13 @@ function renderPolicyContext(policy: SandboxExecutionPolicy): string {
   switch (policy.mode) {
     case 'read-only':
       return 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.'
-    case 'workspace-write':
-      return `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}. Some platform temporary areas may also be writable.`
+    case 'workspace-write': {
+      if (policy.additionalRoots === undefined || policy.additionalRoots.length === 0) {
+        return `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(policy.workspaceRoot)}. Some platform temporary areas may also be writable.`
+      }
+      const roots = [policy.workspaceRoot, ...policy.additionalRoots]
+      return `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace roots: ${JSON.stringify(roots)}. The first root is the session's working directory for relative paths; other roots are accessible by absolute path. Some platform temporary areas may also be writable.`
+    }
     case 'danger-full-access':
       return 'Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.'
     /* v8 ignore next 4 -- SandboxMode is a typed same-process closed union; this branch is only the static exhaustiveness guard. */
@@ -130,13 +135,20 @@ export class SandboxPolicyService extends Service {
    * configured root is the fallback for agentless calls and sessions without a
    * cwd.
    * @param request - optional session and approved mode override.
-   * @returns the fully resolved per-call mode and absolute workspace root.
+   * @returns the fully resolved per-call mode, absolute workspace root, and
+   *   any canonicalized additional roots recorded by the session header.
    */
   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
     const { session } = request
+    const extraRoots = session?.header.additionalRoots === undefined || session.header.additionalRoots.length === 0
+      ? undefined
+      : session.header.additionalRoots.map(resolveWorkspaceRoot)
     return {
       mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
+      // Canonical empty optional fields are absent: an ordinary single-root
+      // session resolves to the exact pre-federation policy object shape.
+      ...extraRoots === undefined ? {} : { additionalRoots: extraRoots },
       ...session === undefined ? {} : { sessionId: session.id },
     }
   }

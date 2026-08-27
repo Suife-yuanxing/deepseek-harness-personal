@@ -44,8 +44,16 @@ Current DSH file policy: read-only. Any available operation enforced by the DSH 
 
 ##### Workspace-write
 
+Single-root session (the pre-federation sentence, byte-identical):
+
 ```markdown
 Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: "<workspace root>". Some platform temporary areas may also be writable.
+```
+
+Multi-root session (the header recorded additional roots):
+
+```markdown
+Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace roots: ["<primary>", "<additional>"]. The first root is the session's working directory for relative paths; other roots are accessible by absolute path. Some platform temporary areas may also be writable.
 ```
 
 ##### Danger-full-access
@@ -56,7 +64,7 @@ Current DSH file policy: danger-full-access. The DSH file sandbox does not restr
 
 #### Token effect
 
-One concise durable context message on the first request and each effective policy change; unchanged requests add nothing. `workspace-write` carries only the canonical session workspace path; platform-specific temporary paths are summarized without adding host-dependent bytes.
+One concise durable context message on the first request and each effective policy change; unchanged requests add nothing. `workspace-write` carries the canonical session workspace path alone for an ordinary session, or one JSON array of the named roots (primary first) when the session records additional roots; platform-specific temporary paths are summarized without adding host-dependent bytes.
 
 #### KV Cache effect
 
@@ -64,6 +72,5 @@ The stable system prompt remains byte-identical across mode changes. A changed f
 
 ## Known Limitations and Deferred Work
 
-- **One primary workspace root per session** — policy resolves `SessionHeader.cwd`; extra writable roots are not part of `SandboxExecutionPolicy`.
 - **File-effect modes only** — `SandboxMode` governs file effects; network and process policy are outside its vocabulary, so no knob here restricts them.
 - **Temporary areas are deliberately summarized** — enforcing backends grant different platform temporary areas, which are selected after policy resolution and therefore cannot be enumerated truthfully in the current context.

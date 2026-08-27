@@ -20,13 +20,14 @@ async function mounted(config: { mode?: 'read-only' | 'workspace-write' | 'dange
   return ctx
 }
 
-function session(id: string, cwd?: string): Session {
+function session(id: string, cwd?: string, additionalRoots?: readonly string[]): Session {
   const sessionId = SessionId(id)
   return Session.create(sessionId, undefined, {
     version: 0,
     id: sessionId,
     createdAt: 0,
     ...cwd === undefined ? {} : { cwd },
+    ...(additionalRoots === undefined || additionalRoots.length === 0) ? {} : { additionalRoots },
   })
 }
 
@@ -60,8 +61,7 @@ describe('SandboxPolicyService', () => {
     })
   })
 
-  it('resolves each session mode and cwd together without changing the fallback', async () => {
-    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+  it('resolves each session mode and cwd together without changing the fallback', async () => {    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
     const first = session('sess-first', '/projects/first')
     const second = session('sess-second', '/projects/second')
     setSandboxMode(second, 'read-only')
@@ -82,6 +82,32 @@ describe('SandboxPolicyService', () => {
       mode: 'workspace-write',
       workspaceRoot: resolve('/fallback'),
     })
+  })
+
+  it('resolves canonicalized additional roots recorded by the session header', async () => {
+    const primary = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-policy-fed-a-')))
+    const raw = mkdtempSync(join(tmpdir(), 'dsh-policy-fed-b-'))
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+
+    const resolved = ctx.sandboxPolicy.resolve({
+      session: session('sess-fed-primary', primary, [raw]),
+    })
+    expect(resolved.mode).toBe('workspace-write')
+    expect(resolved.workspaceRoot).toBe(primary)
+    expect(resolved.additionalRoots).toEqual([realpathSync.native(raw)])
+    expect('sessionId' in resolved).toBe(true)
+  })
+
+  it('omits additional roots entirely for an ordinary session and the agentless call', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+    expect('additionalRoots' in ctx.sandboxPolicy.resolve({ session: session('sess-plain-cwd', '/projects/plain') })).toBe(false)
+    expect('additionalRoots' in ctx.sandboxPolicy.resolve()).toBe(false)
+  })
+
+  it('treats a header-recorded empty list as no additional roots', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+    expect(ctx.sandboxPolicy.resolve({ session: session('sess-empty-list', '/projects/plain', []) }).additionalRoots)
+      .toBeUndefined()
   })
 
   it.skipIf(process.platform === 'win32')('resolves a symlink-sensitive session cwd with POSIX component semantics', async () => {
@@ -159,6 +185,22 @@ describe('sandbox:policy request context', () => {
     } as const
 
     expect(await policyContext(ctx, session(`sess-${mode}`, '/projects/../projects/current'))).toBe(expected[mode])
+  })
+
+  it('renders the multi-root sentence naming every root in order', async () => {
+    const ctx = await promptMounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+    const active = session('sess-multiroot-render', '/projects/current', ['/fed-b', '/fed-c'])
+    expect(await policyContext(ctx, active)).toBe(
+      `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace roots: ${JSON.stringify([resolve('/projects/current'), resolve('/fed-b'), resolve('/fed-c')])}. The first root is the session's working directory for relative paths; other roots are accessible by absolute path. Some platform temporary areas may also be writable.`,
+    )
+  })
+
+  it('keeps the single-root sentence byte-identical when additional roots ride along as an empty list', async () => {
+    const ctx = await promptMounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+    const workspaceRoot = resolve('/projects/current')
+    const legacy = `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(workspaceRoot)}. Some platform temporary areas may also be writable.`
+    expect(await policyContext(ctx, session('sess-empty-render', '/projects/current'))).toBe(legacy)
+    expect(await policyContext(ctx, session('sess-empty-list-render', '/projects/current', []))).toBe(legacy)
   })
 
   it('keeps the complete rendered prompt byte-stable across TMPDIR changes', async () => {
