@@ -41,6 +41,7 @@ export interface HeaderLine {
   origin?: 'subagent'
   delegationDepth: number
   agentPreset?: string
+  additionalRoots?: string[]
 }
 
 /**
@@ -60,6 +61,9 @@ export function toHeaderLine(header: SessionHeader): HeaderLine {
     ...header.origin !== undefined ? { origin: header.origin } : {},
     delegationDepth: header.delegationDepth ?? 0,
     ...header.agentPreset !== undefined ? { agentPreset: header.agentPreset } : {},
+    ...(header.additionalRoots === undefined || header.additionalRoots.length === 0)
+      ? {}
+      : { additionalRoots: [...header.additionalRoots] },
   }
 }
 
@@ -82,6 +86,10 @@ export function fromHeaderLine(line: HeaderLine): SessionHeader {
     ...line.origin !== undefined ? { origin: line.origin } : {},
     delegationDepth: line.delegationDepth,
     ...line.agentPreset !== undefined ? { agentPreset: line.agentPreset } : {},
+    // A parsed line cannot carry an empty array unless an old writer emitted
+    // one; keep the recorded shape verbatim and let the session-store
+    // validation own path checks on restore.
+    ...line.additionalRoots !== undefined ? { additionalRoots: [...line.additionalRoots] } : {},
   }
 }
 
@@ -104,6 +112,11 @@ function isHeaderLine(value: unknown): value is HeaderLine {
       || (value as { origin?: unknown }).origin === 'subagent')
     && ((value as { agentPreset?: unknown }).agentPreset === undefined
       || typeof (value as { agentPreset?: unknown }).agentPreset === 'string')
+    && ((value as { additionalRoots?: unknown }).additionalRoots === undefined
+      || (Array.isArray((value as { additionalRoots?: unknown }).additionalRoots)
+        && ((value as { additionalRoots?: unknown }).additionalRoots as unknown[]).every(
+          member => typeof member === 'string',
+        )))
   )
 }
 

@@ -9,6 +9,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { SESSION_FORMAT_VERSION, Session, SessionId, TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SurfaceEventType, SurfaceIntent } from '@deepseek-ai/dsh-session'
 import { CallId, MessageId, createMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
@@ -94,6 +96,36 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
         const loaded = await persistence.load(m.id)
         expect(loaded.meta).toMatchObject({ version: SESSION_FORMAT_VERSION, id: m.id, cwd: '/work' })
         expect(loaded.events).toEqual(log)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('round-trips immutable additionalRoots creation metadata and omits a canonical empty list', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const rootB = join(tmpdir(), 'fed-contract-b')
+        const withRoots = { ...meta('s-roots', '/work'), additionalRoots: [rootB] }
+        await persistence.create(withRoots)
+        await persistence.append(withRoots.id, oneTurnLog())
+
+        const loaded = await persistence.load(withRoots.id)
+        // The additional roots are durable creation facts: restored verbatim,
+        // and frozen like the rest of the header.
+        expect(loaded.meta.additionalRoots).toEqual([rootB])
+        expect(Object.isFrozen(loaded.meta)).toBe(true)
+        expect(Object.isFrozen(loaded.meta.additionalRoots)).toBe(true)
+        const listed = (await persistence.list()).find(header => header.id === withRoots.id)
+        expect(listed?.additionalRoots).toEqual([rootB])
+
+        // Canonical empty optional fields are absent: no field at all for an
+        // ordinary single-root session.
+        const plain = meta('s-plain', '/work')
+        await persistence.create(plain)
+        await persistence.append(plain.id, oneTurnLog())
+        const reloaded = await persistence.load(plain.id)
+        expect('additionalRoots' in loaded.meta).toBe(true)
+        expect('additionalRoots' in reloaded.meta).toBe(false)
       } finally {
         await dispose()
       }

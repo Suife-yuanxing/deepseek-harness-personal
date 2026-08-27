@@ -383,10 +383,13 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
    * existence is the signal `list` reads).
    */
   private writeRow(meta: SessionHeader): void {
+    const additionalRoots = meta.additionalRoots === undefined || meta.additionalRoots.length === 0
+      ? null
+      : JSON.stringify([...meta.additionalRoots])
     this.db.prepare(`
       INSERT INTO sessions
-        (id, version, created_at, cwd, parent_session, seed_length, origin, delegation_depth, agent_preset, incarnation, revision)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        (id, version, created_at, cwd, parent_session, seed_length, origin, delegation_depth, agent_preset, additional_roots, incarnation, revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       ON CONFLICT(id) DO UPDATE SET
         version = excluded.version,
         created_at = excluded.created_at,
@@ -395,7 +398,8 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
         seed_length = excluded.seed_length,
         origin = excluded.origin,
         delegation_depth = excluded.delegation_depth,
-        agent_preset = excluded.agent_preset
+        agent_preset = excluded.agent_preset,
+        additional_roots = excluded.additional_roots
     `).run(
       meta.id,
       meta.version,
@@ -406,6 +410,7 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
       meta.origin ?? null,
       meta.delegationDepth ?? null,
       meta.agentPreset ?? null,
+      additionalRoots,
       randomUUID(),
     )
   }

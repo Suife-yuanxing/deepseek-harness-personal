@@ -132,6 +132,17 @@ function validateSessionHeader(id: SessionId, input: unknown): SessionHeader {
   if (record.agentPreset !== undefined && typeof record.agentPreset !== 'string') {
     throw new Error('session header agentPreset must be a string')
   }
+  if (record.additionalRoots !== undefined) {
+    if (!Array.isArray(record.additionalRoots)) {
+      throw new Error('session header additionalRoots must be an array of paths')
+    }
+    for (const root of record.additionalRoots) {
+      if (typeof root !== 'string') throw new Error('session header additionalRoots entries must be strings')
+      if (!isAbsolute(root)) {
+        throw new Error(`session header additionalRoots entries must be absolute paths, got "${root}"`)
+      }
+    }
+  }
   return deepFreeze(record as unknown as SessionHeader)
 }
 
@@ -884,6 +895,11 @@ export class SessionStore extends Service {
       ...meta?.origin === undefined ? {} : { origin: meta.origin },
       ...meta?.delegationDepth === undefined ? {} : { delegationDepth: meta.delegationDepth },
       ...meta?.agentPreset === undefined ? {} : { agentPreset: meta.agentPreset },
+      // Canonical empty optional fields are absent: an empty list means the
+      // ordinary single-root session, not a recorded empty set.
+      ...(meta?.additionalRoots === undefined || meta.additionalRoots.length === 0
+        ? {}
+        : { additionalRoots: meta.additionalRoots }),
     }
     return Session.create(sessionId, seed, header)
   }

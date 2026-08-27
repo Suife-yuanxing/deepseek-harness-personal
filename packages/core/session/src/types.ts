@@ -96,6 +96,15 @@ export interface SessionHeader {
    * would replay history the model can no longer act on.
    */
   readonly agentPreset?: string
+  /**
+   * Additional writable workspace roots fixed at creation, excluding `cwd`
+   * (which stays the first root). Each entry is a canonical absolute directory
+   * path that existed when the session was created; entries are pairwise
+   * distinct and distinct from `cwd`. Absent or empty marks an ordinary
+   * single-root session. Like `cwd` this is an immutable creation fact: it is
+   * written once with the header and every resume restores it verbatim.
+   */
+  readonly additionalRoots?: readonly string[]
 }
 
 /**
@@ -118,6 +127,7 @@ export interface CreateSessionOptions {
     readonly origin?: 'subagent'
     readonly delegationDepth?: number
     readonly agentPreset?: string
+    readonly additionalRoots?: readonly string[]
   }
 }
 
