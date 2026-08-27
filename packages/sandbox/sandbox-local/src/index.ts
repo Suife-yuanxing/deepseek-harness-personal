@@ -264,11 +264,12 @@ export class LocalSandboxProvider extends SandboxProvider {
   /** Cached chain verdict; undefined until the first confined wrap needs it. */
   private selectedRunner: SelectedRunner | 'unavailable' | undefined
   /**
-   * Server-lifetime write grants (windows-acl rung): the STANDING
-   * workspace-root grant per workspace (its ACE is the cross-session reuse
-   * cache and outlives the provider — never revoked) and the REVOCABLE
-   * private-temp grant per live session/workspace pair (revoked on provider
-   * dispose).
+   * Server-lifetime write grants (windows-acl rung): the STANDING grant per
+   * workspace ROOT (its ACE is the cross-session reuse cache and outlives the
+   * provider — never revoked; a federation holds one per member) and the
+   * REVOCABLE private-temp grant per live SESSION (revoked on provider
+   * dispose; one session's federation shares a single private temp across
+   * all its members).
    */
   private readonly workspaceGrants = new Map<string, AclWriteGrant>()
   private readonly tempCapabilities = new Map<string, AclTempCapability>()
@@ -345,13 +346,17 @@ export class LocalSandboxProvider extends SandboxProvider {
 
   /**
    * The windows-acl runner argv for one policy. With a calling session (the
-   * policy's `sessionId`) under workspace-write, the grants are materialized
-   * once per provider lifetime — the standing workspace-root grant per
-   * workspace and a revocable, RANDOM private-temp capability per live
-   * session/workspace pair. The runner receives `--write-sid` plus
-   * `--temp-write-sid` and grants nothing itself. Agentless workspace-write
-   * calls pass the ambient temp ROOT and no SID flags: the runner creates and
-   * removes a random private child directory for that one invocation.
+   * policy's `sessionId`) under workspace-write, every member root (primary
+   * first) gets its standing ACE materialized once per provider lifetime —
+   * each under its own {@link workspaceWriteSid} identity — and the live
+   * session receives ONE revocable, RANDOM private-temp capability shared by
+   * all of them. The runner receives `--write-sid` (the primary's), one
+   * `--writable-root` per additional member, plus `--temp-write-sid`, and
+   * grants nothing itself. Agentless workspace-write calls pass the ambient
+   * temp ROOT and no SID flags: the runner creates and removes a random
+   * private child directory for that one invocation. Federation roots only
+   * ride the seated-session path — an agentless call has no durable claim to
+   * authorize extra roots against.
    * @param policy - the resolved per-call policy.
    * @returns the runner invocation.
    */
@@ -365,10 +370,16 @@ export class LocalSandboxProvider extends SandboxProvider {
         '--mode', policy.mode,
       ]
     }
-    const temp = this.materializeAclGrant(sessionId, policy.workspaceRoot)
+    const memberRoots = [...policy.additionalRoots ?? []]
+    for (const root of [policy.workspaceRoot, ...memberRoots]) {
+      assertTempRootOutsideWorkspace(root, tmpdir())
+      this.materializeWorkspaceGrant(root)
+    }
+    const temp = this.materializeSessionTemp(sessionId)
     return [
       ...this.windowsAclRunnerInvocation(),
       '--workspace', policy.workspaceRoot,
+      ...memberRoots.flatMap(memberRoot => ['--writable-root', memberRoot]),
       '--temp', temp.dir,
       '--mode', policy.mode,
       '--write-sid', workspaceWriteSid(policy.workspaceRoot),
@@ -377,39 +388,41 @@ export class LocalSandboxProvider extends SandboxProvider {
   }
 
   /**
-   * Materialize one workspace-write policy's ACEs once per provider
-   * lifetime. The workspace SID and standing root grant are shared by the
-   * workspace. The temp directory is random and carries a distinct SID, so
-   * another session on the same workspace cannot use the shared workspace
-   * SID to enter it. A fresh provider always chooses a new path; crash
-   * residue therefore cannot collide with or authorize a resumed session.
-   * Fail-closed: a half-materialized temp grant is revoked and its directory
-   * removed before the error propagates.
-   * @param sessionId - the policy's calling-session identity.
-   * @param workspaceRoot - the resolved policy root.
-   * @returns the pair's private temp directory and write capability.
+   * Materialize one root's standing workspace ACE once per provider lifetime.
+   * Fail-closed: an apply error disposes the SID allocation before propagating
+   * (a half-applied standing ACE is the intended end state, not residue).
+   * @param root - the canonical member/primary root receiving the ACE.
    */
-  private materializeAclGrant(sessionId: SessionId, workspaceRoot: string): AclTempCapability {
-    assertTempRootOutsideWorkspace(workspaceRoot, tmpdir())
-    const writeSid = workspaceWriteSid(workspaceRoot)
-    if (!this.workspaceGrants.has(workspaceRoot)) {
-      const grant = AclWriteGrant.create(writeSid)
+  private materializeWorkspaceGrant(root: string): void {
+    if (this.workspaceGrants.has(root)) return
+    const grant = AclWriteGrant.create(workspaceWriteSid(root))
+    try {
+      grant.add(root, true)
+    } catch (error) {
+      // Free the SID; a standing ACE (if the apply succeeded before a
+      // post-apply throw) is the intended end state, not an error
+      // artifact — nothing to revoke.
       try {
-        grant.add(workspaceRoot, true)
-      } catch (error) {
-        // Free the SID; a standing ACE (if the apply succeeded before a
-        // post-apply throw) is the intended end state, not an error
-        // artifact — nothing to revoke.
-        try {
-          grant.dispose()
-        } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], 'sandbox-local windows-acl workspace grant failed and its cleanup also failed')
-        }
-        throw error
+        grant.dispose()
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'sandbox-local windows-acl workspace grant failed and its cleanup also failed')
       }
-      this.workspaceGrants.set(workspaceRoot, grant)
+      throw error
     }
-    const key = JSON.stringify([String(sessionId), workspaceRoot])
+    this.workspaceGrants.set(root, grant)
+  }
+
+  /**
+   * Materialize one live session's revocable private-temp capability (once
+   * per session, shared by the whole federation). The random path carries a
+   * distinct SID, so another session cannot use any shared workspace SID to
+   * enter it; a fresh provider always chooses a new path, so crash residue
+   * cannot collide with or authorize a resumed session.
+   * @param sessionId - the policy's calling-session identity.
+   * @returns the private temp directory and write capability.
+   */
+  private materializeSessionTemp(sessionId: SessionId): AclTempCapability {
+    const key = String(sessionId)
     const existing = this.tempCapabilities.get(key)
     if (existing !== undefined) return existing
     const tempDir = mkdtempSync(join(tmpdir(), 'dsh-'))
