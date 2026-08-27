@@ -134,4 +134,37 @@ describe('one-context federated workspace (REAL composition)', () => {
       + 'Some platform temporary areas may also be writable.',
     )
   })
+
+  // The bash mirror of the fs matrix (spec 9.2): same session, the sandbox
+  // seam's argv-prefix runner, additional roots authorized per member
+  // identity. The composition's bash executor always invokes `bash -c`; on
+  // Windows no bash binary exists and the equivalent acceptance is pinned by
+  // sandbox-windows-acl's runner suite (real restricted-token federated-root
+  // probes), so this block self-skips there.
+  it.skipIf(process.platform === 'win32')('confined bash mirrors the root matrix: member write lands, outsider is denied, primary anchors relative paths', async () => {
+    const agent = await federatedAgent()
+    let seq = 0
+    const run = (command: string) => (ctx as Context).tools.execute({
+      callId: CallId(`fed-bash-${seq++}`),
+      name: 'bash', agent,
+      signal: new AbortController().signal,
+      arguments: { command },
+    })
+
+    const [memberWrite, outsiderWrite] = await Promise.all([
+      run(`echo member > ${JSON.stringify(join(projectB, 'member-owned.txt'))}`),
+      run(`echo outside > ${JSON.stringify(join(projectC, 'must-not-exist.txt'))}`),
+    ])
+    // A member write succeeds through its own capability SID.
+    expect(memberWrite.isError).toBe(false)
+    expect(await readFile(join(projectB, 'member-owned.txt'), 'utf8')).toContain('member')
+    // An outsider path carries no member capability — the ACL denies it.
+    expect(outsiderWrite.isError).toBe(true)
+    await expectMissing(join(projectC, 'must-not-exist.txt'))
+    // Relative paths anchor at the PRIMARY root for the confined child too.
+    const primaryRelative = await run('echo primary > primary-owned.txt')
+    expect(primaryRelative.isError).toBe(false)
+    expect(await readFile(join(projectA, 'primary-owned.txt'), 'utf8')).toContain('primary')
+    await expectMissing(join(projectB, 'primary-owned.txt'))
+  })
 })
