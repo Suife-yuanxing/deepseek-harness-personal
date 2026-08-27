@@ -28,9 +28,14 @@ None, as the picker is browser chrome; nothing here reaches a model request.
 
 None; this package neither assembles nor sends a provider request.
 
+### Federations (gray-switched)
+
+When the deployment's gray switch (`workspace.list.federatedWorkspacesEnabled`) is on, the pick menu lists durable federations after the regular workspaces: each row carries an inline stacked-folders glyph, a full-pill member-count capsule (`×N`), and a hover tooltip listing every member basename with the primary marked. Picking one claims the federation identity through the injected carrier — the Host resolves the primary cwd, the member roots, and the primary attach — and opens the returned session. A **New federation…** action raises the create panel: registered workspaces as check rows in selection order, a promote-to-primary ghost button per checked row, a title defaulting to basenames joined with `' + '` (recomputed until the user types), the two-member minimum enforced beside the confirm button, and business failures shown inline while the panel stays open for retry. The switch hides every row and action when off; the sidebar browser keeps its add-only posture and renders no federation rows.
+
 ## Known Limitations and Deferred Work
 
 - **No fuzzy content search or event deep links** — the content backend uses literal token/phrase matching, and selecting a result opens the Session rather than the matching event.
 - **No Session deletion or unarchive control** — sessions can be archived, but archived sessions have no viewing or unarchive surface, and Workspace registration deletion does not delete Sessions.
 - **Pending user interaction is not aggregated into collapsed groups** — a waiting row inside a collapsed group lights no group-header indicator and becomes visible only after that group is expanded.
 - **Native folder selection depends on the local Host carrier** — under the `-native` composition, in-process or remote browser deployments cannot open a local operating-system dialog; platform failures are shown in a retryable modal. Remote-capable picking is the `-browse` composition's in-app flow.
+- **Federations are create/delete/rename only** — membership is immutable after creation and there is no reordering seat (v1 order is creation order); no aggregated session view exists for federations, and mid-session root changes remain out of scope by design.
