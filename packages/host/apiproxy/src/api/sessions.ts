@@ -209,6 +209,12 @@ export interface SessionSummary {
    */
   agentPreset?: string
   /**
+   * Extra canonical writable roots fixed at creation (header passthrough);
+   * absent for an ordinary single-root session. The federated-session chip
+   * surface reads this to render the multi-root marker and its tooltip.
+   */
+  additionalRoots?: readonly string[]
+  /**
    * Projection baseline for this row, with zero log loads: attached sessions
    * read the registry's live watermark cut; cold sessions read the persisted
    * projection cache's stored rows — as stale as that session's last durable

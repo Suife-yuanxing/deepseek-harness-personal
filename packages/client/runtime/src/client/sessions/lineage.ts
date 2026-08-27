@@ -27,6 +27,8 @@ export interface SessionListEntry {
   cwd?: string
   /** Agent preset the session's agent was composed from (summary passthrough). */
   agentPreset?: string
+  /** Extra canonical writable roots fixed at creation (summary passthrough); absent for single-root sessions. */
+  additionalRoots?: readonly string[]
   /** Current host-computed projection values for list consumers. */
   projectionValues?: Readonly<Partial<SessionProjectionMap>>
   /** User interaction currently blocking this session, derived from live mux frames. */

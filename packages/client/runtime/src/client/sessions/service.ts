@@ -52,6 +52,12 @@ export interface SessionSummary {
    * session actually runs rather than the deployment's current default.
    */
   agentPreset?: string
+  /**
+   * Extra canonical writable roots fixed at creation (host header
+   * passthrough); absent for an ordinary single-root session. Federated-row
+   * markers render from this list rather than inferring from the cwd alone.
+   */
+  additionalRoots?: readonly string[]
   parentId?: SessionId
   /** Coarse durable origin for navigation filtering; not a continuation capability. */
   origin?: 'subagent'
@@ -683,6 +689,7 @@ export class SessionRuntime implements ISessions {
         ...(entry.parentSessionId !== undefined ? { parentId: entry.parentSessionId } : {}),
         ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
         ...(entry.agentPreset !== undefined ? { agentPreset: entry.agentPreset } : {}),
+        ...(entry.additionalRoots !== undefined ? { additionalRoots: entry.additionalRoots } : {}),
       }
     }
     if (current !== undefined && currentAddress !== undefined) {

@@ -67,6 +67,7 @@ export const sessionSummarySchema = z.object({
   origin: z.literal('subagent').optional(),
   cwd: z.string().optional(),
   agentPreset: z.string().optional(),
+  additionalRoots: z.array(z.string()).optional(),
   projections: z.lazy(() => sessionProjectionsBlockSchema).optional(),
 }) as unknown as z.ZodType<Wire<SessionSummary>>
 

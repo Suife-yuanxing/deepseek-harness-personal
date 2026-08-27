@@ -541,6 +541,7 @@ function sessionListFields(header: SessionHeader, events: readonly SessionEvent[
   origin?: 'subagent'
   cwd?: string
   agentPreset?: string
+  additionalRoots?: readonly string[]
 } {
   // The preset comes from the log, not the header: a session that switched
   // while blank ran its turns under the newer composition, and a picker
@@ -551,6 +552,7 @@ function sessionListFields(header: SessionHeader, events: readonly SessionEvent[
     ...header.origin === undefined ? {} : { origin: header.origin },
     ...header.cwd === undefined ? {} : { cwd: header.cwd },
     ...agentPreset === undefined ? {} : { agentPreset },
+    ...header.additionalRoots === undefined ? {} : { additionalRoots: header.additionalRoots },
   }
 }
 
