@@ -36,4 +36,42 @@ describe('writableRoots', () => {
     // Deduplicated after canonicalization (/tmp and os.tmpdir() may coincide).
     expect(new Set(roots).size).toBe(roots.length)
   })
+
+  it('workspace-write grants additional roots after the primary and before temp areas', () => {
+    const wsA = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-fed-a-')))
+    const wsB = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-fed-b-')))
+    const roots = writableRoots({
+      mode: 'workspace-write',
+      workspaceRoot: wsA,
+      additionalRoots: [wsB],
+    })
+    // The primary root stays first; named roots follow in order.
+    expect(roots[0]).toBe(wsA)
+    expect(roots[1]).toBe(wsB)
+    expect(roots).toContain(canonicalPath('/tmp'))
+    expect(roots).toContain(realpathSync.native(tmpdir()))
+    expect(new Set(roots).size).toBe(roots.length)
+  })
+
+  it('canonicalizes and deduplicates an alias spelling of a named root', () => {
+    const raw = mkdtempSync(join(tmpdir(), 'dsh-fed-alias-'))
+    const canonical = realpathSync.native(raw)
+    const roots = writableRoots({
+      mode: 'workspace-write',
+      workspaceRoot: canonical,
+      // A symlinked or case-aliased spelling of the same directory must not
+      // mint a second grant.
+      additionalRoots: [raw],
+    })
+    expect(roots.filter(root => root === canonical)).toHaveLength(1)
+  })
+
+  it('treats an absent or empty additionalRoots as the ordinary single-root policy', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'dsh-ws-single-'))
+    const baseline = writableRoots({ mode: 'workspace-write', workspaceRoot: ws })
+    expect(writableRoots({ mode: 'workspace-write', workspaceRoot: ws, additionalRoots: [] }))
+      .toEqual(baseline)
+    expect(writableRoots({ mode: 'workspace-write', workspaceRoot: ws, additionalRoots: undefined }))
+      .toEqual(baseline)
+  })
 })
