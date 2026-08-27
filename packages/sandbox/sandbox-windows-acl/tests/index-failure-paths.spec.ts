@@ -208,6 +208,45 @@ describe('AclSandbox constructor validation', () => {
       mode: 'workspace-write',
     })).toThrow(/temp write SID requires a temp directory/u)
   })
+
+  it('pairs one extra identity per federated member and rejects a count mismatch', () => {
+    const primary = scratch()
+    const member = scratch()
+    expect(() => new AclSandbox({
+      writableDirs: [primary, member],
+      tempDir: null,
+      writeSid: 'S-1-4-9100-1',
+      additionalWriteSids: [],
+      mode: 'workspace-write',
+    })).toThrow(/one additional write SID per additional writable directory/u)
+    // The count matches but the identities repeat: the same clash as sharing
+    // one workspace identity across members.
+    expect(() => new AclSandbox({
+      writableDirs: [primary, member],
+      tempDir: null,
+      writeSid: 'S-1-4-9100-1',
+      additionalWriteSids: ['S-1-4-9100-1'],
+      mode: 'workspace-write',
+    })).toThrow(/must be distinct from the primary write SID/u)
+    const sandbox = new AclSandbox({
+      writableDirs: [primary, member],
+      tempDir: null,
+      writeSid: 'S-1-4-9100-1',
+      additionalWriteSids: ['S-1-4-9100-2'],
+      mode: 'workspace-write',
+    })
+    expect(sandbox.writableDirs).toEqual([resolve(primary), resolve(member)])
+  })
+
+  it('rejects additional write SIDs under read-only', () => {
+    const primary = scratch()
+    expect(() => new AclSandbox({
+      writableDirs: [primary],
+      tempDir: null,
+      additionalWriteSids: ['S-1-4-9100-3'],
+      mode: 'read-only',
+    })).toThrow(/read-only does not accept write SIDs/u)
+  })
 })
 
 describe('AclSandbox init', () => {
@@ -225,6 +264,28 @@ describe('AclSandbox init', () => {
     await sandbox.init()
     expect(sandbox.tempDir).toBe(resolve(temp))
     expect(setNamedSecurityInfoW).toHaveBeenCalledTimes(2)
+  })
+
+  it('grants each federated member under its own identity beside the primary pair', async () => {
+    const { setNamedSecurityInfoW, convertStringSidToSidW } = state.stubs as HappyStubs
+    const primary = scratch()
+    const member = scratch()
+    const temp = scratch()
+    const sandbox = new AclSandbox({
+      writableDirs: [primary, member],
+      tempDir: temp,
+      writeSid: 'S-1-4-9200-1',
+      additionalWriteSids: ['S-1-4-9200-2'],
+      tempWriteSid: 'S-1-4-9200-1-1',
+      mode: 'workspace-write',
+    })
+    await sandbox.init()
+    // Two workspace grants plus one temp grant.
+    expect(setNamedSecurityInfoW).toHaveBeenCalledTimes(3)
+    const parsedSids = convertStringSidToSidW.mock.calls.map(call => call[0] as string)
+    for (const sid of ['S-1-4-9200-1', 'S-1-4-9200-2', 'S-1-4-9200-1-1']) {
+      expect(parsedSids).toContain(sid)
+    }
   })
 
   it('requires an explicit private temp directory or null under workspace-write', () => {

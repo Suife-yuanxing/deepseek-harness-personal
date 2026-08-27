@@ -8,15 +8,20 @@
  *
  * Stable argv contract (the seam builds it; a native-exe replacement would
  * keep the same contract):
- *   [node, runner.js, '--workspace', <dir>, '--temp', <dir>,
+ *   [node, runner.js, '--workspace', <dir>,
+ *    ['--writable-root', <dir>]...,
+ *    '--temp', <dir>,
  *    '--mode', <read-only|workspace-write>,
  *    ['--write-sid', <S-1-4-…>,
  *     '--temp-write-sid', <S-1-4-…>], '--', <argv...>]
  *
  * Modes:
- *  - workspace-write: the workspace and temp directories carry distinct
- *    capability-SID Write grants; other ACL-addressable writes are denied
- *    except for the documented Everyone and hard-link boundaries.
+ *  - workspace-write: the workspace (and each additional federation root)
+ *    plus temp carry distinct capability-SID Write grants; other
+ *    ACL-addressable writes are denied except for the documented Everyone and
+ *    hard-link boundaries. Each additional root derives its own SID from its
+ *    path — the token carries one identity per member, and every additional
+ *    root must sit OUTSIDE the private temp the way the primary must.
  *  - read-only: no capability-SID grants; the restricting list carries no
  *    capability SID, so a standing grant ACE from an earlier
  *    workspace-write period stays inert. BOTH modes drop Authenticated Users
@@ -64,6 +69,8 @@ function fail(detail: string): never {
 
 interface ParsedArgs {
   workspace: string
+  /** Additional federation member roots (`--writable-root`, repeatable). */
+  additionalRoots: string[]
   temp: string
   mode: 'read-only' | 'workspace-write'
   writeSid: string | undefined
@@ -74,6 +81,7 @@ interface ParsedArgs {
 
 function parseArgs(raw: string[]): ParsedArgs {
   let workspace: string | undefined
+  const additionalRoots: string[] = []
   let temp: string | undefined
   let mode: string | undefined
   let writeSid: string | undefined
@@ -90,6 +98,7 @@ function parseArgs(raw: string[]): ParsedArgs {
     if (value === undefined) fail(`missing value after ${token}`)
     switch (token) {
       case '--workspace': workspace = value; break
+      case '--writable-root': additionalRoots.push(value); break
       case '--temp': temp = value; break
       case '--mode': mode = value; break
       case '--write-sid': writeSid = value; break
@@ -103,7 +112,7 @@ function parseArgs(raw: string[]): ParsedArgs {
   const argv = raw.slice(index)
   const command = argv[0]
   if (command === undefined) fail('missing command after --')
-  return { workspace, temp, mode, writeSid, tempWriteSid: parsedTempWriteSid, command, args: argv.slice(1) }
+  return { workspace, additionalRoots, temp, mode, writeSid, tempWriteSid: parsedTempWriteSid, command, args: argv.slice(1) }
 }
 
 function requireDirectory(label: string, path: string): void {
@@ -114,20 +123,35 @@ function requireDirectory(label: string, path: string): void {
 
 async function main(): Promise<number> {
   const parsed = parseArgs(process.argv.slice(2))
-  // Both directories are validated in both modes: a provider bug that passes
-  // a bogus root must fail loudly at the runner boundary, never mid-child.
+  // Every root is validated in both modes: a provider bug that passes a bogus
+  // root must fail loudly at the runner boundary, never mid-child. A repeated
+  // --writable-root spelling of the primary would double-grant one directory.
   requireDirectory('--workspace', parsed.workspace)
+  for (const [index, root] of parsed.additionalRoots.entries()) {
+    if (root === parsed.workspace || parsed.additionalRoots.indexOf(root) !== index) {
+      fail(`additional writable root repeats an earlier member: ${root}`)
+    }
+    requireDirectory(`--writable-root ${index}`, root)
+  }
   requireDirectory('--temp', parsed.temp)
 
   const seamManaged = parsed.writeSid !== undefined || parsed.tempWriteSid !== undefined
-  if (parsed.mode === 'read-only' && seamManaged) {
-    fail('read-only does not accept --write-sid or --temp-write-sid')
+  if (parsed.mode === 'read-only') {
+    if (seamManaged) {
+      fail('read-only does not accept --write-sid or --temp-write-sid')
+    }
+    if (parsed.additionalRoots.length > 0) {
+      fail('read-only does not accept --writable-root')
+    }
   }
   if (parsed.mode === 'workspace-write' && (parsed.writeSid === undefined) !== (parsed.tempWriteSid === undefined)) {
     fail('workspace-write requires --write-sid and --temp-write-sid together')
   }
-  if (parsed.mode === 'workspace-write') {
-    assertTempRootOutsideWorkspace(parsed.workspace, parsed.temp)
+  // The private temp must sit outside EVERY granted root — a temp inside any
+  // member would inherit that member's standing capability into the tree the
+  // session treats as private scratch space.
+  for (const root of [parsed.workspace, ...parsed.additionalRoots]) {
+    assertTempRootOutsideWorkspace(root, parsed.temp)
   }
 
   const api = await win32()
@@ -159,10 +183,15 @@ async function main(): Promise<number> {
       }
     }
     sandbox = new AclSandbox({
-      writableDirs: parsed.mode === 'workspace-write' ? [parsed.workspace] : [],
+      writableDirs: parsed.mode === 'workspace-write'
+        ? [parsed.workspace, ...parsed.additionalRoots]
+        : [],
       tempDir: privateTempDir,
       mode: parsed.mode,
       ...writeSid === undefined ? {} : { writeSid },
+      ...writeSid === undefined || parsed.additionalRoots.length === 0 ? {} : {
+        additionalWriteSids: parsed.additionalRoots.map(memberRoot => workspaceWriteSid(memberRoot)),
+      },
       ...privateTempSid === undefined ? {} : { tempWriteSid: privateTempSid },
       manageDacls: !seamManaged,
     })

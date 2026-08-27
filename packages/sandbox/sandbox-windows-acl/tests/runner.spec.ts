@@ -440,6 +440,91 @@ describe.skipIf(!isWin32 || !pwshAvailable())('windows-acl runner', () => {
     expect(result.stderr).toContain('windows-acl-run: ')
   }, 15_000)
 
+  it('federated roots: the additional writable root writes OK while outsiders stay denied (seam-managed grants)', () => {
+    // The provider's grant shape for a federation: one standing workspace ACE
+    // per member root, each under that root's own workspaceWriteSid identity,
+    // plus the caller-owned private temp. The runner argv carries only the
+    // additional root paths — both ends derive every SID from its path.
+    const primaryWorkspace = join(scratchRoot, 'fed-primary')
+    const memberRoot = join(scratchRoot, 'fed-member')
+    mkdirSync(primaryWorkspace)
+    mkdirSync(memberRoot)
+    const primarySid = workspaceWriteSid(primaryWorkspace)
+    const memberSid = workspaceWriteSid(memberRoot)
+    const privateTemp = join(isolatedTemp, 'fed-private')
+    mkdirSync(privateTemp)
+    const tempSid = tempWriteSid(privateTemp)
+    const primaryGrant = AclWriteGrant.create(primarySid)
+    const memberGrant = AclWriteGrant.create(memberSid)
+    const tempGrant = AclWriteGrant.create(tempSid)
+    primaryGrant.add(primaryWorkspace)
+    memberGrant.add(memberRoot)
+    tempGrant.add(privateTemp)
+    try {
+      // Node probe (same lane the sibling-isolation case uses): a pwsh child's
+      // restricted-token startup fails at its own launch layer on this host,
+      // so the acceptance writes ride node directly.
+      const probe = [
+        "const fs = require('node:fs');",
+        `const targets = [['PRIMARY', ${JSON.stringify(join(primaryWorkspace, 'fed-primary.txt'))}], ['MEMBER', ${JSON.stringify(join(memberRoot, 'fed-member.txt'))}], ['ESCAPE', ${JSON.stringify(escapeFile)}], ['TEMP', null]];`,
+        'for (const [name, target] of targets) {',
+        "if (target === null) { const p = require('node:path').join(process.env.TEMP ?? '', 'fed-temp.txt'); try { fs.writeFileSync(p, name); console.log(name + ': OK'); } catch { console.log(name + ': DENIED'); } continue; }",
+        'try { fs.writeFileSync(target, name); console.log(name + \': OK\'); } catch { console.log(name + \': DENIED\'); }',
+        '}',
+      ].join('\n')
+      const result = runRunner([
+        '--workspace', primaryWorkspace, '--writable-root', memberRoot, '--temp', privateTemp,
+        '--mode', 'workspace-write', '--write-sid', primarySid, '--temp-write-sid', tempSid,
+        '--', process.execPath, '-e', probe,
+      ])
+      expect(result.status, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0)
+      expect(result.stdout).toContain('PRIMARY: OK')
+      expect(result.stdout).toContain('MEMBER: OK')
+      expect(result.stdout).toContain('ESCAPE: DENIED')
+      expect(result.stdout).toContain('TEMP: OK')
+      expect(existsSync(join(memberRoot, 'fed-member.txt'))).toBe(true)
+      expect(existsSync(escapeFile)).toBe(false)
+    } finally {
+      primaryGrant.dispose()
+      memberGrant.dispose()
+      tempGrant.dispose()
+      rmSync(privateTemp, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('federated roots fail loud at the boundary when a private temp sits inside an additional root', () => {
+    const primaryWorkspace = join(scratchRoot, 'fed-boundary-primary')
+    const memberRoot = join(scratchRoot, 'fed-boundary-member')
+    mkdirSync(primaryWorkspace)
+    mkdirSync(memberRoot)
+    const nestedTemp = join(memberRoot, 'temp-inside-member')
+    mkdirSync(nestedTemp)
+    const marker = join(primaryWorkspace, 'command-ran.txt')
+    const result = runRunner([
+      '--workspace', primaryWorkspace, '--writable-root', memberRoot, '--temp', nestedTemp,
+      '--mode', 'workspace-write',
+      '--', process.execPath, '-e', "require('node:fs').writeFileSync(process.argv[1], 'ran')", marker,
+    ])
+    expect(result.status, `stderr: ${result.stderr}`).toBe(127)
+    expect(result.stderr).toContain('windows-acl-run: Windows ACL temp root must be outside the workspace')
+    expect(existsSync(marker)).toBe(false)
+  }, 15_000)
+
+  it('federated roots fail loud when an additional root does not exist or repeats the primary', () => {
+    const cases: string[][] = [
+      ['--workspace', writableDir, '--writable-root', join(scratchRoot, 'missing-fed-root')],
+      ['--workspace', writableDir, '--writable-root', writableDir],
+    ]
+    for (const args of cases) {
+      const result = runRunner([
+        ...args, '--temp', isolatedTemp, '--mode', 'workspace-write',
+        '--', process.execPath, '-e', 'process.exit(99)',
+      ])
+      expect(result.status, `args: ${args.join(' ')}\nstderr: ${result.stderr}`).toBe(127)
+      expect(result.stderr).toContain('windows-acl-run: ')
+    }
+  }, 15_000)
+
   it('runner-side failure: seam-managed SID flags must be paired and match their owning paths', () => {
     const writeSid = workspaceWriteSid(writableDir)
     const tempSid = tempWriteSid(isolatedTemp)
