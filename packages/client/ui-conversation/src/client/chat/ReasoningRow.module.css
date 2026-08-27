@@ -55,8 +55,8 @@
   overflow: hidden;
   flex: 1 1 auto;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 14px;
-  line-height: 24px;
+  font-size: 13px;
+  line-height: 22px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -65,13 +65,27 @@
   text-overflow: clip;
 }
 
+/* 展开态:限高内滚(长思维链不撑爆对话流),上下渐隐提示可滚动;
+   左侧强调细条 + 浅底圆角,与正文形成层级但不喧宾夺主。 */
 .thinkBody {
-  padding: 4px 0 4px 22px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 14px;
-  line-height: 24px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 2px 0 4px 8px;
+  padding: 8px 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 1.75;
   white-space: pre-wrap;
   word-break: break-word;
+  background: color-mix(in srgb, var(--dsw-alias-fill-l2, rgba(127,127,127,.1)) 45%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--dsw-alias-label-tertiary) 38%, transparent);
+  border-radius: 0 8px 8px 0;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
+  scrollbar-width: thin;
+}
+
+.thinkBody:hover {
+  border-left-color: color-mix(in srgb, var(--dsw-alias-label-secondary) 55%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -246,21 +246,21 @@ export class WorkspaceManager {
   async createFederation(
     input: { title?: string; memberPaths: string[] },
   ): Promise<RpcResult<{ federation: FederationView; created: boolean }>> {
-    const result = await this.api.workspace.createFederation(input)
+    const { result } = await this.api.workspace.createFederation(input)
     if (result.ok) void this.refresh()
     return result
   }
 
   /** Rename a federation; success triggers the same refresh convergence. */
   async renameFederation(federationId: FederationId, title: string): Promise<RpcResult<{ federation: FederationView }>> {
-    const result = await this.api.workspace.renameFederation({ federationId, title })
+    const { result } = await this.api.workspace.renameFederation({ federationId, title })
     if (result.ok) void this.refresh()
     return result
   }
 
   /** Delete a federation registration (idempotent host-side); refresh converges the list. */
   async deleteFederation(federationId: FederationId): Promise<RpcResult<{ deleted: true }>> {
-    const result = await this.api.workspace.deleteFederation({ federationId })
+    const { result } = await this.api.workspace.deleteFederation({ federationId })
     if (result.ok) void this.refresh()
     return result
   }

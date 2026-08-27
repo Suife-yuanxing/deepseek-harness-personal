@@ -5,6 +5,7 @@ import type {
   ClientResponse, HostFrame, IApiClient, ModelSelection, MuxFrame,
   RpcError, RpcReceipt, RpcRequest, RpcResponse, SessionId, SessionModels, SessionSearchItem, SkillEntry,
   WorkspaceId, WorkspaceView,
+  FederationId, FederationView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import { RpcId } from '@deepseek-ai/dsh-client-connection/client'
 import type { SessionRemotes } from '../src/client/sessions/remotes.ts'
@@ -204,10 +205,39 @@ export class FakeApiClient implements IApiClient {
   onWorkspaceArchiveSession: (payload: unknown) => Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>> =
     payload => Promise.resolve(ok({ archivedSessionIds: [(payload as { sessionId: SessionId }).sessionId] }))
 
+  onWorkspaceCreateFederation: (payload: unknown) => Promise<RpcResponse<{ federation: FederationView; created: boolean }>> =
+    () => Promise.resolve(ok({
+      federation: { federationId: 'fk-fed' as FederationId, title: 'a + b', memberPaths: [], createdAt: '', updatedAt: '' },
+      created: true,
+    }))
+
+  onWorkspaceListFederations: (payload: unknown) => Promise<RpcResponse<{ items: FederationView[] }>> =
+    () => Promise.resolve(ok({ items: [] }))
+
+  onWorkspaceRenameFederation: (payload: unknown) => Promise<RpcResponse<{ federation: FederationView }>> =
+    payload => Promise.resolve(ok({
+      federation: {
+        federationId: (payload as { federationId: FederationId }).federationId,
+        title: (payload as { title: string }).title,
+        memberPaths: [],
+        createdAt: '',
+        updatedAt: '',
+      },
+    }))
+
+  onWorkspaceDeleteFederation: (payload: unknown) => Promise<RpcResponse<{ deleted: true }>> =
+    () => Promise.resolve(ok({ deleted: true }))
+
   readonly workspace: IApiClient['workspace'] = {
     list: (payload: unknown) => this.record('workspace.list', payload, this.onWorkspaceList(payload).then(response => (
       response.result.ok
-        ? { ...response, result: { ok: true as const, value: { archivedSessionIds: [] as never[], ...response.result.value } } }
+        ? {
+          ...response,
+          result: {
+            ok: true as const,
+            value: { archivedSessionIds: [] as never[], federations: [] as never[], ...response.result.value },
+          },
+        }
         : response
     )) as ReturnType<IApiClient['workspace']['list']>),
     create: (payload: unknown) => this.record('workspace.create', payload, this.onWorkspaceCreate(payload)),
@@ -219,6 +249,14 @@ export class FakeApiClient implements IApiClient {
       this.record('workspace.insertSessionBefore', payload, this.onWorkspaceInsertSessionBefore(payload)),
     archiveSession: (payload: unknown) =>
       this.record('workspace.archiveSession', payload, this.onWorkspaceArchiveSession(payload)),
+    createFederation: (payload: unknown) =>
+      this.record('workspace.createFederation', payload, this.onWorkspaceCreateFederation(payload)),
+    listFederations: (payload: unknown) =>
+      this.record('workspace.listFederations', payload, this.onWorkspaceListFederations(payload)),
+    renameFederation: (payload: unknown) =>
+      this.record('workspace.renameFederation', payload, this.onWorkspaceRenameFederation(payload)),
+    deleteFederation: (payload: unknown) =>
+      this.record('workspace.deleteFederation', payload, this.onWorkspaceDeleteFederation(payload)),
   }
 
   // Payloads stay `unknown` (lint-lane note above); response rows are the real

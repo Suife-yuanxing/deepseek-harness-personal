@@ -53,12 +53,15 @@
   line-height: 20px;
   color: var(--dsw-alias-label-secondary);
   cursor: default;
+  overflow: hidden;
 }
 
 .header {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .figures {
@@ -66,14 +69,25 @@
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-primary);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .percent {
+  flex: none;
+  white-space: nowrap;
   font-weight: 500;
   color: var(--dsw-alias-label-primary);
 }
 
 .headline {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -137,10 +151,15 @@
 }
 
 .row dt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--dsw-alias-label-secondary);
 }
 
 .row dd {
+  flex: none;
   margin: 0;
   font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-primary);

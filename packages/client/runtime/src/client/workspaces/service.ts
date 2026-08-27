@@ -232,7 +232,7 @@ export class WorkspaceRuntime implements IWorkspaces {
    * @returns the created session id (already in the list store).
    */
   async startFederatedSession(federationId: FederationId): Promise<SessionId> {
-    const result = await this.api.sessions.create({ federationId })
+    const { result } = await this.api.sessions.create({ federationId })
     if (!result.ok) throw new FederationCreateError(result.error)
     return result.value.sessionId
   }

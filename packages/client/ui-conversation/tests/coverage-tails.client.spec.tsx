@@ -33,7 +33,7 @@ describe('tails', () => {
         streaming
       />,
     )
-    expect(view.getByText('Think')).toBeTruthy()
+    expect(view.getByText('思维链')).toBeTruthy()
     expect(view.getByText('thinking hard')).toBeTruthy()
     expect(view.getByText(/未知内容块/)).toBeTruthy()
     const stopped = render(

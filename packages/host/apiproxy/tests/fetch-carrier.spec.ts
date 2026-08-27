@@ -162,7 +162,27 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
     },
     workspace: {
       async list(request) {
-        return { rpcId: request.rpcId, result: { ok: true, value: { items: [], archivedSessionIds: [] } } }
+        return { rpcId: request.rpcId, result: { ok: true, value: { items: [], archivedSessionIds: [], federations: [] } } }
+      },
+      async createFederation(request) {
+        const federation = {
+          federationId: 'fx-fed' as never, title: 'a + b', memberPaths: [],
+          createdAt: '', updatedAt: '',
+        }
+        return { rpcId: request.rpcId, result: { ok: true, value: { federation, created: true as const } } }
+      },
+      async listFederations(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { items: [] } } }
+      },
+      async renameFederation(request) {
+        const federation = {
+          federationId: request.payload.federationId, title: request.payload.title,
+          memberPaths: [], createdAt: '', updatedAt: '',
+        }
+        return { rpcId: request.rpcId, result: { ok: true, value: { federation } } }
+      },
+      async deleteFederation(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { deleted: true as const } } }
       },
       async create(request) {
         return {

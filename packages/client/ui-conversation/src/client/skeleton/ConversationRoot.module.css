@@ -241,6 +241,22 @@
      gutter moves the input card sideways by the bar's width whenever the two
      differ ([decision](../../../../../../.agents/notes/implemented/bug-fix/2026-08-04-composer-tab-gutter-reservation.md)). */
   scrollbar-gutter: stable;
+  /* Reveal-on-approach: the thumb paints nothing until the pointer enters the
+     scroll body, then restores the global l1 token (see ui-theme
+     styles/scrollbar.css for the rebinding contract). The gutter is reserved
+     above, so nothing shifts when the thumb appears. Scrollers that rebind the
+     token locally (queue dock, todo panel, approval) keep their own thumbs. */
+  --dsh-scrollbar-thumb: transparent;
+}
+
+.scrollBody:hover {
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l1);
+}
+
+/* Soft fade for the reveal where the engine supports transitions on the
+   scrollbar part; engines that ignore it simply snap. */
+.scrollBody::-webkit-scrollbar-thumb {
+  transition: background-color .2s ease;
 }
 
 .root[data-phase='active'] .viewArea {

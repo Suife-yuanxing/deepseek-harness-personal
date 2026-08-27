@@ -16,7 +16,7 @@ import type {
 } from './sessions.ts'
 import type { ToolEventView } from './events.ts'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { WorkspaceId } from './workspace.ts'
+import type { WorkspaceId, FederationId } from './workspace.ts'
 import {
   SESSION_SEARCH_RESULT_LIMIT,
   SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS,
@@ -35,7 +35,16 @@ export const messageIdSchema = z.string().min(1) as unknown as z.ZodType<Message
  * workspace.schema references sessionIdSchema — schema modules must stay a
  * DAG (both casts used at module top level; a cycle is a load-time TDZ).
  */
+/**
+ * WorkspaceId: the workspace domain's one brand cast. Hosted here rather
+ * than in workspace.schema because session.create references it while
+ * workspace.schema references sessionIdSchema — schema modules must stay a
+ * DAG (both casts used at module top level; a cycle is a load-time TDZ).
+ */
 export const workspaceIdSchema = z.string().min(1) as unknown as z.ZodType<WorkspaceId>
+
+/** FederationId: the federation domain's one brand cast, hosted beside its sibling for the same DAG reason. */
+export const federationIdSchema = z.string().min(1) as unknown as z.ZodType<FederationId>
 
 /** SessionEvent passthrough: strict envelope, wide data (the client fold handles unknown types via its documented default). */
 export const sessionEventSchema = z.object({
@@ -103,7 +112,7 @@ export const sessionCreateRequestSchema = z.object({
   workspaceId: workspaceIdSchema.optional(),
   cwd: z.string().optional(),
   /** Claim a durable federation identity instead of a bare project directory. */
-  federationId: z.string().min(1).optional(),
+  federationId: federationIdSchema.optional(),
   /** Additional writable roots; gated by the deployment's federated-workspace switch host-side. */
   additionalRoots: z.array(z.string().min(1)).max(16).optional(),
   sessionId: sessionIdSchema.optional(),

@@ -2406,7 +2406,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           const primary = await ctx.workspaceRegistry.resolveByPath(claimedFederation.memberPaths[0] as string)
           if (primary === undefined) {
             return err(request, {
-              code: 'workspace-not-found',
+              code: 'workspace-invalid-path',
               message: `federation "${claimedFederation.id}" primary member ${JSON.stringify(
                 claimedFederation.memberPaths[0],
               )} is not a registered workspace`,
@@ -3131,9 +3131,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       async createFederation(request) {
         const { payload } = request
         try {
+          // exactOptionalPropertyTypes: an absent title is omitted, never undefined.
           const federation = await ctx.workspaceRegistry.createFederation({
-            title: payload.title,
             memberPaths: payload.memberPaths,
+            ...(payload.title === undefined ? {} : { title: payload.title }),
           })
           return ok(request, { federation: federationView(federation), created: true })
         } catch (error: unknown) {

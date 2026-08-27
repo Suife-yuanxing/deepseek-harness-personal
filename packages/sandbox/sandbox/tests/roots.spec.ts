@@ -71,7 +71,8 @@ describe('writableRoots', () => {
     const baseline = writableRoots({ mode: 'workspace-write', workspaceRoot: ws })
     expect(writableRoots({ mode: 'workspace-write', workspaceRoot: ws, additionalRoots: [] }))
       .toEqual(baseline)
-    expect(writableRoots({ mode: 'workspace-write', workspaceRoot: ws, additionalRoots: undefined }))
+    // exactOptionalPropertyTypes: "absent" is spelled by omitting the key.
+    expect(writableRoots({ mode: 'workspace-write', workspaceRoot: ws }))
       .toEqual(baseline)
   })
 })

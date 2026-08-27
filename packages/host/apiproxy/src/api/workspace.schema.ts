@@ -8,12 +8,11 @@ import { z } from 'zod'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
 import type { FederationView, WorkspaceView } from './workspace.ts'
-import { sessionIdSchema, workspaceIdSchema } from './sessions.schema.ts'
+import { sessionIdSchema, workspaceIdSchema, federationIdSchema } from './sessions.schema.ts'
 
 export { workspaceIdSchema } from './sessions.schema.ts'
-
-/** FederationId brand cast — domain-local (no session-domain DAG dependency). */
-export const federationIdSchema = z.string().min(1) as unknown as z.ZodType<import('./workspace.ts').FederationId>
+/** FederationId cast is hosted in sessions.schema (DAG note there); re-exported as the domain-local name. */
+export { federationIdSchema } from './sessions.schema.ts'
 
 /** FederationView row of every federation.* response. */
 export const federationViewSchema = z.object({

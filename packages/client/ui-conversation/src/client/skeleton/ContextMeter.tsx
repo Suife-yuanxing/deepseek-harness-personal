@@ -72,6 +72,7 @@ export function ContextMeter({ useProjection, t }: ContextMeterProps) {
   if (context === null) return null
   const percent = context.percent
   const reading = `${percent}%`
+  const figuresText = `~${formatTokens(context.usedTokens)} / ${formatTokens(context.contextWindow)}`
   const [headBefore = '', headAfter = ''] = t('context.aria', { percent: READING_SLOT })
     .split(READING_SLOT)
     .map(part => part.trim())
@@ -120,8 +121,10 @@ export function ContextMeter({ useProjection, t }: ContextMeterProps) {
             <span className={css.headline}>{headBefore}</span>
             <span className={css.percent}>{reading}</span>
             <span className={css.headline}>{headAfter}</span>
-            <span className={css.figures}>
-              {`~${formatTokens(context.usedTokens)} / ${formatTokens(context.contextWindow)}`}
+            {/* Figures stay on one line; the title keeps the full reading
+                available on hover when the ellipsis bites. */}
+            <span className={css.figures} title={figuresText}>
+              {figuresText}
             </span>
           </div>
           <div className={css.bar}>

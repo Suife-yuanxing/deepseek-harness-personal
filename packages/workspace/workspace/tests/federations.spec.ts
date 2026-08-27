@@ -39,7 +39,7 @@ async function harness(options: HarnessOptions = {}) {
   return { ctx, fiber, pool, registry: ctx.workspaceRegistry }
 }
 
-let base: string
+let base: string | undefined
 const tempDirs: string[] = []
 
 async function makeDir(name: string): Promise<string> {
@@ -137,7 +137,10 @@ describe('federation registry CRUD', () => {
     const pool = new MemoryMediaPool()
     pool.versions.set('workspace', DOMAIN_VERSION)
     pool.media.set('workspace', {
-      tables: new Map([['workspaces', new Map()], ['federations', new Map()]]),
+      tables: new Map<string, Map<string, unknown>>([
+        ['workspaces', new Map()],
+        ['federations', new Map()],
+      ]),
       global: { initialized: true, workspaceIds: [], archivedSessionIds: [] },
     })
     const { registry, fiber } = await harness({ pool })

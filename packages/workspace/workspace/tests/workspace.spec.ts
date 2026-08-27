@@ -143,8 +143,8 @@ function record(path: string, sessionIds: string[], createdAt = '2026-07-24T00:0
  * Media written before archivedSessionIds existed omit the field; keeping the
  * fixtures in that shape continuously proves the schema default upgrades them.
  */
-type StoredDomainState = Omit<WorkspaceDomainState, 'archivedSessionIds'>
-  & Partial<Pick<WorkspaceDomainState, 'archivedSessionIds'>>
+type StoredDomainState = Omit<WorkspaceDomainState, 'archivedSessionIds' | 'federationIds'>
+  & Partial<Pick<WorkspaceDomainState, 'archivedSessionIds' | 'federationIds'>>
 
 function storedPool(
   entries: Array<[string, WorkspaceRecord]>,

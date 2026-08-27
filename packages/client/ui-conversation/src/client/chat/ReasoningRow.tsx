@@ -18,10 +18,10 @@ function latestLine(text: string): string {
 }
 
 /**
- * Render one assistant reasoning block as the Think disclosure row.
+ * Render one assistant reasoning block as the localized thinking-chain disclosure row.
  * @param props.text - complete or streaming reasoning text.
  * @param props.running - whether this block is the streaming tail.
- * @param props.t - conversation locale seat for the running status.
+ * @param props.t - conversation locale seat for the title and running status.
  * @returns the reasoning disclosure.
  */
 export function ReasoningRow({ text, running, t }: { text: string; running: boolean; t: ChatViewSlotProps['t'] }) {
@@ -46,7 +46,7 @@ export function ReasoningRow({ text, running, t }: { text: string; running: bool
         titleClassName={css.title}
         chevronClassName={css.chevron}
         icon={<IconThinkOutline14 size={14} />}
-        title="Think"
+        title={t('reasoning.title')}
         open={expanded}
         expandable
         expandOnRowClick

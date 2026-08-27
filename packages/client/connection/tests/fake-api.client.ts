@@ -149,7 +149,28 @@ export class FakeApiClient implements IApiClient {
   }
 
   readonly workspace: IApiClient['workspace'] = {
-    list: (payload: unknown) => this.record('workspace.list', payload, Promise.resolve(ok({ items: [], archivedSessionIds: [] }))),
+    list: (payload: unknown) => this.record('workspace.list', payload, Promise.resolve(ok({ items: [], archivedSessionIds: [], federations: [] }))),
+    createFederation: (payload: unknown) => this.record('workspace.createFederation', payload, Promise.resolve(ok({
+      federation: {
+        federationId: 'fk-fed' as never,
+        title: ((payload as { memberPaths?: string[] }).memberPaths ?? []).map(p => p.split(/[\\/]/).pop()).join(' + '),
+        memberPaths: (payload as { memberPaths?: string[] }).memberPaths ?? [],
+        createdAt: '0',
+        updatedAt: '0',
+      },
+      created: true as const,
+    }))),
+    listFederations: (payload: unknown) => this.record('workspace.listFederations', payload, Promise.resolve(ok({ items: [] }))),
+    renameFederation: (payload: unknown) => this.record('workspace.renameFederation', payload, Promise.resolve(ok({
+      federation: {
+        federationId: (payload as { federationId: never }).federationId,
+        title: (payload as { title: string }).title,
+        memberPaths: [],
+        createdAt: '0',
+        updatedAt: '0',
+      },
+    }))),
+    deleteFederation: (payload: unknown) => this.record('workspace.deleteFederation', payload, Promise.resolve(ok({ deleted: true as const }))),
     create: (payload: unknown) => this.record('workspace.create', payload, Promise.resolve(ok({
       workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0' },
       created: true,

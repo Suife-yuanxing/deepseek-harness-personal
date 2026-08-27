@@ -1,7 +1,7 @@
 /** Test-owned workspaces face: the renderer standard-kit observable plus recorded actions. */
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
-  DirectoryListing, IWorkspaces, SessionId, SnapshotStore, WorkspaceId, WorkspaceListState, WorkspaceView,
+  DirectoryListing, FederationId, FederationView, IWorkspaces, SessionId, SnapshotStore, WorkspaceId, WorkspaceListState, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import { workspaceListState } from './fixtures.ts'
 import type { Stabilizer } from './fixtures.ts'
@@ -86,6 +86,39 @@ export class TestWorkspaces implements IWorkspaces {
       path: input.path,
       sessionIds: [],
     } as unknown as WorkspaceView
+  }
+
+  /**
+   * Create a federation (recorded). The default echoes a view derived from
+   * the members; stub for validation-failure flows.
+   * @param input - optional title plus the member paths in order.
+   * @returns the created federation view.
+   */
+  async createFederation(input: { title?: string; memberPaths: string[] }): Promise<FederationView> {
+    this.calls.push({ method: 'createFederation', args: [input] })
+    const stub = this.stubs.get('createFederation')
+    if (stub !== undefined) return await (stub(input) as Promise<FederationView>)
+    const title = (input.title ?? input.memberPaths.map(p => p.split(/[\\/]/).pop()).join(' + ')).trim()
+    return {
+      federationId: `fed-${title}` as FederationId,
+      title,
+      memberPaths: [...input.memberPaths],
+      createdAt: '',
+      updatedAt: '',
+    }
+  }
+
+  /**
+   * Start a session from a federation identity (recorded). The default
+   * derives the claimed id; stub for failure or list-coupled flows.
+   * @param federationId - the claimed federation.
+   * @returns the created session id.
+   */
+  async startFederatedSession(federationId: FederationId): Promise<SessionId> {
+    this.calls.push({ method: 'startFederatedSession', args: [federationId] })
+    const stub = this.stubs.get('startFederatedSession')
+    if (stub !== undefined) return await (stub(federationId) as Promise<SessionId>)
+    return `session-of-${String(federationId)}` as SessionId
   }
 
   /**

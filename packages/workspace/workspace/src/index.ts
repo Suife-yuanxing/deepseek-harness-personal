@@ -871,7 +871,7 @@ export class WorkspaceRegistry extends Service {
       await table.delete(id)
     } catch (error) {
       // Mirror deleteKnown's ordering guarantee in reverse: put the record back.
-      const record = table.get(id) as FederationRecord | undefined
+      const record = table.get(id)
       const restored = record !== undefined ? freezeFederation(id, record) : undefined
       if (restored !== undefined) this.federationSnapshots.set(id, restored)
       try {
