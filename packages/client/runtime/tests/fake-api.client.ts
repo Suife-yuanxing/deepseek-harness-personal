@@ -235,7 +235,10 @@ export class FakeApiClient implements IApiClient {
           ...response,
           result: {
             ok: true as const,
-            value: { archivedSessionIds: [] as never[], federations: [] as never[], ...response.result.value },
+            value: {
+              archivedSessionIds: [] as never[], federations: [] as never[],
+              federatedWorkspacesEnabled: true, ...response.result.value,
+            },
           },
         }
         : response

@@ -24,6 +24,11 @@ export interface WorkspaceListState {
   archivedSessionIds: readonly SessionId[]
   /** Durable federations in creation order (the pick flow's read face). */
   federations: readonly FederationView[]
+  /**
+   * Deployment's federated-workspace gray switch mirrored from the list
+   * baseline; the pick flow hides its federation affordances when false.
+   */
+  federatedWorkspacesEnabled: boolean
   state: 'idle' | 'loading' | 'error'
   phase: WorkspaceListPhase
   error: RpcError | null
@@ -76,7 +81,8 @@ export class WorkspaceRuntime implements IWorkspaces {
   constructor(ctx: Context, private readonly api: IApiClient, private readonly sessions: SessionsPort) {
     this.manager = new WorkspaceManager(api)
     this.list = createSnapshotStore<WorkspaceListState>({
-      items: [], archivedSessionIds: [], federations: [], state: 'idle', phase: 'pending', error: null,
+      items: [], archivedSessionIds: [], federations: [], federatedWorkspacesEnabled: false,
+      state: 'idle', phase: 'pending', error: null,
       baselinesReady: false, recentWorkspaceId: undefined,
     })
     this.manager.subscribe(() => { this.project() })
@@ -381,6 +387,7 @@ export class WorkspaceRuntime implements IWorkspaces {
       items: workspace.items,
       archivedSessionIds: workspace.archivedSessionIds,
       federations: workspace.federations,
+      federatedWorkspacesEnabled: workspace.federatedWorkspacesEnabled,
       state: workspace.state,
       phase: workspace.phase,
       error: workspace.error,

@@ -24,6 +24,12 @@ export interface WorkspaceListSnapshot {
   archivedSessionIds: readonly SessionId[]
   /** Durable federation compositions in creation order (read face for pick flows). */
   federations: readonly FederationView[]
+  /**
+   * Deployment's federated-workspace gray switch, mirrored from the last list
+   * baseline. UI affordances hide when false; already-durable federated
+   * sessions keep resolving regardless.
+   */
+  federatedWorkspacesEnabled: boolean
   state: 'idle' | 'loading' | 'error'
   phase: WorkspaceListPhase
   error: RpcError | null
@@ -43,6 +49,7 @@ export class WorkspaceManager {
   // carry the complete set), so deltas never merge — installs replace.
   private archivedSessionIds: readonly SessionId[] = []
   private federations: readonly FederationView[] = []
+  private federatedWorkspacesEnabled = false
   private state: WorkspaceListSnapshot['state'] = 'idle'
   private phase: WorkspaceListPhase = 'pending'
   private error: RpcError | null = null
@@ -104,6 +111,7 @@ export class WorkspaceManager {
           this.installViews(items)
           if (!this.archivedSupersedesRefresh) this.installArchived(result.value.archivedSessionIds)
           this.federations = result.value.federations
+          this.federatedWorkspacesEnabled = result.value.federatedWorkspacesEnabled
           this.state = 'idle'
           this.phase = 'ready'
         } else {
@@ -310,6 +318,7 @@ export class WorkspaceManager {
       items: this.itemViews(),
       archivedSessionIds: this.archivedSessionIds,
       federations: this.federations,
+      federatedWorkspacesEnabled: this.federatedWorkspacesEnabled,
       state: this.state,
       phase: this.phase,
       error: this.error,
