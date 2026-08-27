@@ -15,6 +15,41 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 export type WorkspaceId = Branded<'WorkspaceId'>
 
 /**
+ * Identifies one federation record. A generated uuid, like {@link WorkspaceId}:
+ * membership paths are rewrite-prone, so reference anchors stay opaque ids.
+ */
+export type FederationId = Branded<'FederationId'>
+
+/**
+ * One federation: a named, ordered composition of at least two registered
+ * directories, usable as a session-creation preset. `memberPaths[0]` is the
+ * primary root (the session cwd); the others enter the sandbox's additional
+ * writable roots. Records are immutable after create except title/updatedAt
+ * through rename — v1 has no member editing and no manual ordering.
+ */
+export interface Federation {
+  /** Stable record id (generated uuid). */
+  readonly id: FederationId
+
+  /** Display title; unique among federations (mirror of the wire's name rule). */
+  readonly title: string
+
+  /**
+   * Canonical directory paths in creation order. Members are NOT required to
+   * be registered workspaces at use time beyond their create-time check;
+   * a vanished directory keeps its slot (the session-side validation owns
+   * liveness), mirroring {@link Workspace}'s tolerant missing-dir stance.
+   */
+  readonly memberPaths: readonly string[]
+
+  /** ISO-8601 creation instant, stamped at create and never rewritten. */
+  readonly createdAt: string
+
+  /** ISO-8601 instant of the last durable mutation (create and rename count). */
+  readonly updatedAt: string
+}
+
+/**
  * One workspace: a stable id over an existing directory, a display title, and
  * an ordered candidate account of sessions. Membership requires both an id in
  * that account and a session header whose canonical cwd equals the workspace

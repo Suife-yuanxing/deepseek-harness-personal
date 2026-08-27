@@ -18,12 +18,15 @@ import type { WorkspaceEntityHost } from './entity.ts'
 export { WorkspaceMoveInvalidError } from './entity.ts'
 import { realpathNormalize } from './paths.ts'
 import { workspaceDomainSpec } from './spec.ts'
-import type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
-import type { Workspace, WorkspaceId as WorkspaceIdBrand } from './types.ts'
+import type { WorkspaceDomainState, WorkspaceRecord, FederationRecord } from './spec.ts'
+import type { Workspace, WorkspaceId as WorkspaceIdBrand, Federation, FederationId as FederationIdBrand } from './types.ts'
 
 export type { Workspace } from './types.ts'
+export type { Federation } from './types.ts'
 export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
+export { federationRecord } from './spec.ts'
 export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
+export type { FederationRecord } from './spec.ts'
 export { realpathNormalize } from './paths.ts'
 
 /** Identifies one workspace record (see `src/types.ts` for the brand rationale). */
@@ -36,6 +39,45 @@ export type WorkspaceId = WorkspaceIdBrand
  */
 export function WorkspaceId(id: string): WorkspaceId {
   return id as WorkspaceId
+}
+
+/** Identifies one federation record (see `src/types.ts` for the brand rationale). */
+export type FederationId = FederationIdBrand
+
+/**
+ * Brand a string as a {@link FederationId}.
+ * @param id - Raw federation id string.
+ * @returns the same string, branded at compile time.
+ */
+export function FederationId(id: string): FederationId {
+  return id as FederationId
+}
+
+/** A create/rename claimed a federation title another federation already holds. */
+export class FederationNameConflictError extends Error {
+  constructor(readonly title: string) {
+    super(`federation name '${title}' is already in use`)
+    this.name = 'FederationNameConflictError'
+  }
+}
+
+/** A federation mutation named an id the registry does not hold. */
+export class FederationUnknownError extends Error {
+  constructor(readonly federationId: FederationId) {
+    super(`cannot rename unknown federation '${federationId}'`)
+    this.name = 'FederationUnknownError'
+  }
+}
+
+/** A create claimed a membership list that fails canonical validation. */
+export class FederationInvalidMembersError extends Error {
+  constructor(
+    readonly path: string,
+    readonly reason: string,
+  ) {
+    super(`invalid federation member ${JSON.stringify(path)}: ${reason}`)
+    this.name = 'FederationInvalidMembersError'
+  }
 }
 
 /**
@@ -93,9 +135,12 @@ export class WorkspaceRegistry extends Service {
   static inject = ['storageDomain', 'sessionPersistence']
 
   private table?: KvTable<WorkspaceId, WorkspaceRecord>
+  private federationsTable?: KvTable<FederationId, FederationRecord>
   private global?: DomainGlobal<WorkspaceDomainState>
   private state?: WorkspaceDomainState
   private readonly entities = new Map<WorkspaceId, WorkspaceEntity>()
+  /** Frozen `Federation` snapshots in durable order, mirroring {@link WorkspaceRegistry.entities}. */
+  private readonly federationSnapshots = new Map<FederationId, Federation>()
   private readonly headers = new Map<SessionId, SessionHeader>()
   private readonly sessionPaths = new Map<SessionId, string>()
   private readonly invalidSessionPaths = new Map<SessionId, string>()
@@ -120,6 +165,7 @@ export class WorkspaceRegistry extends Service {
     const domain = await this.ctx.storageDomain.open(workspaceDomainSpec)
     this.ctx.effect(() => () => domain.close(), 'workspace.domainClose')
     this.table = domain.table('workspaces')
+    this.federationsTable = domain.table('federations')
     this.global = domain.global
     this.state = domain.global.get()
 
@@ -136,6 +182,7 @@ export class WorkspaceRegistry extends Service {
     await this.indexLiveSessions()
     this.validateStoredState(this.requireState())
     this.rebuildEntities()
+    this.rebuildFederations()
     this.reportFilteredCandidates()
   }
 
@@ -198,6 +245,62 @@ export class WorkspaceRegistry extends Service {
    */
   delete(id: WorkspaceId): Promise<boolean> {
     return this.enqueueOperation(() => this.deleteKnown(id))
+  }
+
+  /**
+   * Create a federation over at least two existing directories. Every member
+   * canonicalizes through the workspace path canon and must be an existing
+   * directory, pairwise distinct after canonicalization. The display title
+   * defaults to the members' basenames joined with `' + '`; an explicit
+   * title is trimmed and must be non-empty and unique among federations.
+   * @param input - Optional title plus two or more member paths in creation
+   *   order (`[0]` becomes the primary root).
+   * @returns the durable federation snapshot.
+   */
+  async createFederation(input: { title?: string; memberPaths: readonly string[] }): Promise<Federation> {
+    const members = await this.canonicalFederationMembers(input.memberPaths)
+    const title = federationTitle(
+      input.title ?? members.map(path => basename(path)).join(' + '),
+    )
+    return await this.enqueueOperation(() => this.createFederationCanonical(title, members))
+  }
+
+  /**
+   * Synchronous federation projection in durable (creation) order; v1 has no
+   * manual ordering. No persistence reads per call.
+   * @returns a fresh ordered array of federation snapshots.
+   */
+  listFederations(): Federation[] {
+    return this.requireState().federationIds.map((id) => {
+      const snapshot = this.federationSnapshots.get(id)
+      if (snapshot === undefined) {
+        throw new Error(`workspace registry order references missing federation '${id}'`)
+      }
+      return snapshot
+    })
+  }
+
+  /**
+   * Rename one federation durably. Trimmed titles must be non-empty and
+   * unique among federations; renaming to the current title resolves without
+   * writing. An unknown id rejects with {@link FederationUnknownError}.
+   * @param id - Federation to rename.
+   * @param title - New display title.
+   * @returns the updated snapshot.
+   */
+  renameFederation(id: FederationId, title: string): Promise<Federation> {
+    return this.enqueueOperation(() => this.renameFederationKnown(id, federationTitle(title)))
+  }
+
+  /**
+   * Remove one federation registration while retaining its member
+   * directories and every session log. Unknown ids are an idempotent no-op,
+   * mirroring {@link WorkspaceRegistry.delete}.
+   * @param id - Federation registration to remove.
+   * @returns `true` when a record was deleted, `false` when it was unknown.
+   */
+  deleteFederation(id: FederationId): Promise<boolean> {
+    return this.enqueueOperation(() => this.deleteFederationKnown(id))
   }
 
   /**
@@ -331,6 +434,7 @@ export class WorkspaceRegistry extends Service {
         initialized: true,
         workspaceIds: [id, ...state.workspaceIds],
         archivedSessionIds: state.archivedSessionIds,
+        federationIds: state.federationIds,
       })
     } catch (error) {
       this.entities.delete(id)
@@ -363,6 +467,7 @@ export class WorkspaceRegistry extends Service {
       initialized: true,
       workspaceIds: state.workspaceIds.filter(workspaceId => workspaceId !== id),
       archivedSessionIds: state.archivedSessionIds,
+      federationIds: state.federationIds,
     }
     await this.setState({
       ...nextState,
@@ -420,6 +525,7 @@ export class WorkspaceRegistry extends Service {
       initialized: state.initialized,
       workspaceIds: state.workspaceIds,
       archivedSessionIds: state.archivedSessionIds,
+      federationIds: state.federationIds,
     })
   }
 
@@ -502,9 +608,19 @@ export class WorkspaceRegistry extends Service {
       .map(([id]) => id)
 
     if (!sameIds(state.workspaceIds, workspaceIds)) {
-      await this.setState({ initialized: false, workspaceIds, archivedSessionIds: state.archivedSessionIds })
+      await this.setState({
+        initialized: false,
+        workspaceIds,
+        archivedSessionIds: state.archivedSessionIds,
+        federationIds: state.federationIds,
+      })
     }
-    await this.setState({ initialized: true, workspaceIds, archivedSessionIds: state.archivedSessionIds })
+    await this.setState({
+      initialized: true,
+      workspaceIds,
+      archivedSessionIds: state.archivedSessionIds,
+      federationIds: state.federationIds,
+    })
   }
 
   private validateStoredState(state: WorkspaceDomainState): void {
@@ -524,6 +640,29 @@ export class WorkspaceRegistry extends Service {
       throw new Error(
         `workspace domain is inconsistent: workspace '${orphan as WorkspaceId}' is absent from registry order`,
       )
+    }
+
+    const federationTable = this.requireFederationsTable()
+    const federationOrder = new Set<FederationId>()
+    for (const id of state.federationIds) {
+      if (federationOrder.has(id)) {
+        throw new Error(`workspace domain is inconsistent: registry order repeats federation '${id}'`)
+      }
+      if (federationTable.get(id) === undefined) {
+        throw new Error(`workspace domain is inconsistent: registry order references missing federation '${id}'`)
+      }
+      federationOrder.add(id)
+    }
+    for (const [id, record] of federationTable.entries()) {
+      // Structural membership shape only: canonical distinctness is enforced
+      // at the write boundary; a stored row that lost it proves medium-level
+      // corruption, and the invariant companion covers the write path.
+      if (record.memberPaths.length < 2 || new Set(record.memberPaths).size !== record.memberPaths.length) {
+        throw new Error(
+          `workspace domain is inconsistent: federation '${id}' holds `
+          + `${record.memberPaths.length} member paths — records require two or more distinct entries`,
+        )
+      }
     }
 
     const paths = new Map<string, WorkspaceId>()
@@ -556,6 +695,20 @@ export class WorkspaceRegistry extends Service {
       const record = this.requireTable().get(id) as WorkspaceRecord
       this.entities.set(id, new WorkspaceEntity(this.host, id, record))
     }
+  }
+
+  /** Rebuild the frozen federation snapshots from durable order (order/table divergence already rejected). */
+  private rebuildFederations(): void {
+    this.federationSnapshots.clear()
+    const table = this.requireFederationsTable()
+    for (const id of this.requireState().federationIds) {
+      this.federationSnapshots.set(id, freezeFederation(id, table.get(id) as FederationRecord))
+    }
+  }
+
+  private requireFederationsTable(): KvTable<FederationId, FederationRecord> {
+    if (this.federationsTable === undefined) throw new Error('federation table requires an initialized registry')
+    return this.federationsTable
   }
 
   private async replaceHeaderIndex(headers: readonly SessionHeader[]): Promise<void> {
@@ -640,6 +793,125 @@ export class WorkspaceRegistry extends Service {
     return this.state
   }
 
+  private async renameFederationKnown(id: FederationId, title: string): Promise<Federation> {
+    const snapshot = this.federationSnapshots.get(id)
+    const table = this.requireFederationsTable()
+    if (snapshot === undefined) throw new FederationUnknownError(id)
+    if (snapshot.title === title) return snapshot
+    for (const existing of this.federationSnapshots.values()) {
+      if (existing.id !== id && existing.title === title) throw new FederationNameConflictError(title)
+    }
+    const record: FederationRecord = { ...table.get(id) as FederationRecord, title, updatedAt: new Date().toISOString() }
+    await table.put(id, record)
+    const updated = freezeFederation(id, record)
+    this.federationSnapshots.set(id, updated)
+    return updated
+  }
+
+  /**
+   * Create durably WITHOUT the workspace pending marker: a federation row is
+   * immutable and only reachable through its order entry, so a crash between
+   * the record write and the order append leaves an unreachable row that the
+   * next successful operation may overwrite by id — never a half-visible state.
+   */
+  private async createFederationCanonical(title: string, members: readonly string[]): Promise<Federation> {
+    for (const existing of this.federationSnapshots.values()) {
+      if (existing.title === title) throw new FederationNameConflictError(title)
+    }
+    const table = this.requireFederationsTable()
+    const state = this.requireState()
+    const id = FederationId(randomUUID())
+    const now = new Date().toISOString()
+    const record: FederationRecord = {
+      title,
+      memberPaths: [...members],
+      createdAt: now,
+      updatedAt: now,
+    }
+    const snapshot = freezeFederation(id, record)
+    this.federationSnapshots.set(id, snapshot)
+    try {
+      await table.put(id, record)
+    } catch (error) {
+      this.federationSnapshots.delete(id)
+      throw error
+    }
+    try {
+      await this.setState({
+        ...state,
+        initialized: true,
+        federationIds: [...state.federationIds, id],
+      })
+    } catch (error) {
+      this.federationSnapshots.delete(id)
+      try {
+        await table.delete(id)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `federation '${id}' order write and record rollback both failed`,
+        )
+      }
+      throw error
+    }
+    return snapshot
+  }
+
+  private async deleteFederationKnown(id: FederationId): Promise<boolean> {
+    const table = this.requireFederationsTable()
+    if (table.get(id) === undefined) return false
+    const state = this.requireState()
+    await this.setState({
+      ...state,
+      initialized: true,
+      federationIds: state.federationIds.filter(federationId => federationId !== id),
+    })
+    this.federationSnapshots.delete(id)
+    try {
+      await table.delete(id)
+    } catch (error) {
+      // Mirror deleteKnown's ordering guarantee in reverse: put the record back.
+      const record = table.get(id) as FederationRecord | undefined
+      const restored = record !== undefined ? freezeFederation(id, record) : undefined
+      if (restored !== undefined) this.federationSnapshots.set(id, restored)
+      try {
+        await this.setState({
+          ...state,
+          initialized: true,
+          federationIds: [...state.federationIds, id],
+        })
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `federation '${id}' record deletion and order rollback both failed`,
+        )
+      }
+      throw error
+    }
+    return true
+  }
+
+  private async canonicalFederationMembers(requested: readonly string[]): Promise<string[]> {
+    if (requested.length < 2) {
+      throw new FederationInvalidMembersError(requested[0] ?? '', 'a federation requires two or more members')
+    }
+    const canonicals: string[] = []
+    for (const raw of requested) {
+      let canonical: string
+      try {
+        canonical = await realpathNormalize(raw)
+        if (!(await stat(canonical)).isDirectory()) throw new Error('not a directory')
+      } catch {
+        throw new FederationInvalidMembersError(raw, 'it does not resolve to an existing directory')
+      }
+      if (canonicals.includes(canonical)) {
+        throw new FederationInvalidMembersError(raw, 'duplicate member after canonicalization')
+      }
+      canonicals.push(canonical)
+    }
+    return canonicals
+  }
+
   private async setState(state: WorkspaceDomainState): Promise<void> {
     await (this.global as DomainGlobal<WorkspaceDomainState>).set(state)
     this.state = state
@@ -659,5 +931,23 @@ export class WorkspaceRegistry extends Service {
 
 const sameSessionIds = (left: readonly SessionId[], right: readonly SessionId[]): boolean =>
   left.length === right.length && left.every((id, index) => id === right[index])
+
+/** Normalize a claimed federation title: trimmed, non-empty. */
+function federationTitle(raw: string): string {
+  const title = raw.trim()
+  if (title.length === 0) throw new Error('federation title must be a non-empty string')
+  return title
+}
+
+/** Freeze one durable record into the published {@link Federation} snapshot shape. */
+function freezeFederation(id: FederationId, record: FederationRecord): Federation {
+  return Object.freeze({
+    id,
+    title: record.title,
+    memberPaths: Object.freeze([...record.memberPaths]),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  })
+}
 
 export default WorkspaceRegistry

@@ -59,3 +59,51 @@ describe('workspace cache/table invariant', () => {
     expect(() => { ctx.emit('domain/changed', put()) }).toThrow(/diverged/)
   })
 })
+
+describe('federation record invariant', () => {
+  const fedPut = (overrides?: {
+    key?: string
+    memberPaths?: string[]
+    ordered?: boolean
+  }): DomainChanged => ({
+    domain: 'workspace',
+    table: 'federations',
+    key: overrides?.key ?? 'f1',
+    operation: 'put',
+    value: { title: 't', memberPaths: overrides?.memberPaths ?? ['/a', '/b'], createdAt: '', updatedAt: '' },
+  })
+
+  async function federationSetup(orderIds: string[]): Promise<Context> {
+    const ctx = new Context()
+    await ctx.plugin(InvariantRegistry)
+    ctx.provide('workspaceRegistry', {
+      get: () => undefined,
+      listFederations: () => orderIds.map(id => ({ id })),
+    })
+    await ctx.plugin(WorkspaceInvariant)
+    return ctx
+  }
+
+  it('accepts a well-formed two-member put referenced by the durable order', async () => {
+    const ctx = await federationSetup(['f1'])
+    expect(() => { ctx.emit('domain/changed', fedPut()) }).not.toThrow()
+  })
+
+  it('fails a malformed membership row (fewer than two distinct entries)', async () => {
+    const ctx = await federationSetup(['f1'])
+    expect(() => { ctx.emit('domain/changed', fedPut({ memberPaths: ['/a'] })) }).toThrow(/two or more distinct/)
+    expect(() => { ctx.emit('domain/changed', fedPut({ memberPaths: ['/a', '/a'] })) }).toThrow(/two or more distinct/)
+  })
+
+  it('fails a well-formed row the durable order does not reference', async () => {
+    const ctx = await federationSetup(['other'])
+    expect(() => { ctx.emit('domain/changed', fedPut()) }).toThrow(/order does .*not.* reference|diverged/)
+  })
+
+  it('ignores deleted rows and foreign tables for federations', async () => {
+    const ctx = await federationSetup([])
+    expect(() => { ctx.emit('domain/changed', {
+      domain: 'workspace', table: 'federations', key: 'gone', operation: 'deleted',
+    }) }).not.toThrow()
+  })
+})

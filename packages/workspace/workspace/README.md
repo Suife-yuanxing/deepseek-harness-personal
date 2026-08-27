@@ -8,6 +8,17 @@ The entity/storage rationale lives in the [domain Agent Note](../../../.agents/n
 
 ## Shape
 
+`ctx.workspaceRegistry` additionally owns durable **federation** records
+(`createFederation` / `listFederations` / `renameFederation` /
+`deleteFederation`): a named, immutable, ordered composition of at least two
+existing directories (`memberPaths[0]` is the primary root), stored in the
+same `workspace` domain under a `federations` table plus a defaulted
+`federationIds` order field. Membership canonicalizes through the workspace
+path canon and must be pairwise distinct; titles are trimmed, non-empty, and
+unique among federations. Members may vanish after create without mutating the
+record — session-creation validation owns liveness, mirroring the workspace's
+tolerant missing-dir stance.
+
 - `ctx.workspaceRegistry.create(path, title?)` — canonicalizes `path` via `fs.realpath`, rejects a nonexistent or non-directory path, creates at most one record per canonical path, and prepends a new record to durable workspace order. Repeated calls for that path return the existing workspace without changing its title; different paths may share a display title.
 - `ctx.workspaceRegistry.get(id)` / `list()` / `resolveByPath(path)` — cache-served lookups. `list()` is synchronous and follows durable registry order; `resolveByPath` is async because it applies the same `realpath` canon and rejects a missing path rather than creating it.
 - `ctx.workspaceRegistry.insertBefore(id, before?)` — moves a registered Workspace within durable registry order, DOM-insertBefore-like: before the anchor, or appended when the anchor is omitted. A source or anchor absent from the registry rejects without writing; a self-anchor or move to the current position resolves without writing. The returned id list is the complete committed order.
@@ -40,5 +51,6 @@ Independent of live requests: the package never touches a request prefix, so it 
 
 ## Known Limitations and Deferred Work
 
+- Federations are immutable after create (no member editing, no manual ordering; editing is delete-and-recreate in v1), and the federation write path skips the workspace pending-mutation marker: records are immutable and reachable only through order, so a crash between record and order writes leaves an unreachable row rather than a half-visible state.
 - Session deletion and destructive folder removal are separate, absent capabilities; Workspace registration deletion never substitutes for either ([decision](../../../.agents/notes/implemented/feature/2026-07-27-workspace-registration-deletion.md)).
 - The header index refreshes at startup and when attach must resolve an uncached persisted id; deletion or cwd damage performed by another process is observed after the next refresh or restart.
