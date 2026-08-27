@@ -81,7 +81,7 @@ function scriptedApi(overrides: {
       ...overrides.host,
     },
     workspace: {
-      list: r => ok(r, { items: [], archivedSessionIds: [], federations: [] }),
+      list: r => ok(r, { items: [], archivedSessionIds: [], federations: [], federatedWorkspacesEnabled: true }),
       create: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' }, created: true }),
       rename: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' } }),
       delete: r => ok(r, { deleted: true as const }),
@@ -444,7 +444,9 @@ describe('workspace domain round trip', () => {
   it('routes both workspace methods through their handler rows and value schemas', async () => {
     const c = client(scriptedApi())
     const list = await c.workspace.list({})
-    expect(list.result).toEqual({ ok: true, value: { items: [], archivedSessionIds: [], federations: [] } })
+    expect(list.result).toEqual({
+      ok: true, value: { items: [], archivedSessionIds: [], federations: [], federatedWorkspacesEnabled: true },
+    })
     const created = await c.workspace.create({ path: '/t' })
     expect(created.result.ok).toBe(true)
     if (created.result.ok) expect(created.result.value.created).toBe(true)

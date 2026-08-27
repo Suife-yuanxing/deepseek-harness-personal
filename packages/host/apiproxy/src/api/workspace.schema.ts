@@ -41,6 +41,7 @@ export const workspaceListValueSchema = z.object({
   items: z.array(workspaceViewSchema),
   archivedSessionIds: z.array(sessionIdSchema),
   federations: z.array(federationViewSchema),
+  federatedWorkspacesEnabled: z.boolean(),
 }) satisfies z.ZodType<Wire<ResponseValue<'workspace.list'>>>
 
 /** workspace.create request payload: the existing directory to adopt. */

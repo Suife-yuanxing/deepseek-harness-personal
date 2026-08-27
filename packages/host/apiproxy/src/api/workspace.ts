@@ -58,11 +58,16 @@ export interface WorkspaceApi {
    * registry-global archive set (the reconnect baseline of
    * `host/archived-sessions-changed`). Archived sessions stay in their
    * workspace's `sessionIds` account; grouping surfaces hide them.
+   *
+   * `federatedWorkspacesEnabled` mirrors the deployment's gray switch so the
+   * pick flow can hide its federation affordances without a second config
+   * read; resolution of existing federated sessions is never gated by it.
    */
   list(request: RpcRequest<{}>): Promise<RpcResponse<{
     items: WorkspaceView[]
     archivedSessionIds: SessionId[]
     federations: FederationView[]
+    federatedWorkspacesEnabled: boolean
   }>>
 
   /**

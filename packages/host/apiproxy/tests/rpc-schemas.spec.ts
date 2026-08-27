@@ -370,8 +370,11 @@ describe('workspace domain schemas', () => {
     expect(workspaceViewSchema.parse(view).sessionIds).toEqual(['s1'])
     expect(() => workspaceViewSchema.parse({ ...view, sessionIds: 's1' })).toThrow()
     expect(workspaceListRequestSchema.parse({})).toEqual({})
-    expect(workspaceListValueSchema.parse({ items: [view], archivedSessionIds: ['s1'], federations: [] }).items).toHaveLength(1)
+    expect(workspaceListValueSchema.parse({ items: [view], archivedSessionIds: ['s1'], federations: [], federatedWorkspacesEnabled: false }).items).toHaveLength(1)
     expect(() => workspaceListValueSchema.parse({ items: [view], archivedSessionIds: ['s1'] })).toThrow()
+    // The gray-switch bit is required on the wire: a missing position fails
+    // loudly instead of letting the UI guess the deployment's stance.
+    expect(() => workspaceListValueSchema.parse({ items: [], archivedSessionIds: [], federations: [] })).toThrow()
   })
 
   const fedView = {

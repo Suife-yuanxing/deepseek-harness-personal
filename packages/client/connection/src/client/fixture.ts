@@ -2574,6 +2574,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         items: workspaces.map(w => ({ ...w })),
         archivedSessionIds: [...archivedSessionIds],
         federations: federations.map(f => ({ ...f })),
+        federatedWorkspacesEnabled: true,
       }),
       createFederation: (request) => {
         const { payload } = request

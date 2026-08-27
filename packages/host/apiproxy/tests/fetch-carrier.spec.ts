@@ -162,7 +162,10 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
     },
     workspace: {
       async list(request) {
-        return { rpcId: request.rpcId, result: { ok: true, value: { items: [], archivedSessionIds: [], federations: [] } } }
+        return {
+          rpcId: request.rpcId,
+          result: { ok: true, value: { items: [], archivedSessionIds: [], federations: [], federatedWorkspacesEnabled: true } },
+        }
       },
       async createFederation(request) {
         const federation = {

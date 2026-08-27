@@ -3013,6 +3013,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           items: ctx.workspaceRegistry.list().map(workspaceView),
           archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds],
           federations: ctx.workspaceRegistry.listFederations().map(federationView),
+          federatedWorkspacesEnabled,
         }))
       },
 
