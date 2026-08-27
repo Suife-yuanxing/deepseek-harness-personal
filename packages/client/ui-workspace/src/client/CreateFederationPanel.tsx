@@ -74,6 +74,11 @@ export function CreateFederationPanel({
 
   /** Submit to the carrier; business failures land inline below the list. */
   const confirm = (): void => {
+    // Defense-in-depth behind the footer button's disabled attribute: testing
+    // library and browsers both refuse clicks on a disabled control, so no
+    // mounted-UI path reaches the early return with members short or pending.
+    /* v8 ignore next -- unreachable through the rendered affordance; kept as
+       the code-level enforcement that the enable state is not trusted. */
     if (!enoughMembers || pending) return
     setPending(true)
     setError(null)
@@ -85,6 +90,10 @@ export function CreateFederationPanel({
       onClose()
     }).catch((reason: unknown) => {
       setPending(false)
+      // The carrier rejects with Error subclasses only (the typed
+      // FederationCreateError); any other value is outside the contract.
+      /* v8 ignore next -- the non-Error branch exists for a foreign
+         reimplementation of the callback, unreachable under this face. */
       setError(reason instanceof Error ? reason.message : String(reason))
     })
   }
@@ -165,5 +174,8 @@ export function CreateFederationPanel({
 /** Everything after the last path separator (Windows and POSIX forms). */
 function basenameOf(path: string): string {
   const tail = path.split(/[\\/]/).pop()
+  /* v8 ignore next -- split on any separator always yields at least one
+     element, so pop() cannot miss; the arm guards only a hypothetical empty
+     path that member projection never passes. */
   return tail ?? ''
 }

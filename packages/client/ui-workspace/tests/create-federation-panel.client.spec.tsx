@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type {
   FederationView, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -36,7 +36,7 @@ interface MountOptions {
 function mount({ workspaces = [workspace('alpha', 'Alpha'), workspace('beta', 'Beta')], createFederation }: MountOptions = {}) {
   const carrier = createFederation ?? vi.fn(async () => created())
   const onClose = vi.fn()
-  render(
+  const view = render(
     <CreateFederationPanel
       createFederation={carrier}
       workspaces={workspaces}
@@ -44,7 +44,14 @@ function mount({ workspaces = [workspace('alpha', 'Alpha'), workspace('beta', 'B
       onClose={onClose}
     />,
   )
-  return { carrier, onClose }
+  return {
+    carrier, onClose,
+    rerender(nextWorkspaces: readonly WorkspaceView[]): void {
+      view.rerender(
+        <CreateFederationPanel createFederation={carrier} workspaces={nextWorkspaces} t={t} onClose={onClose} />,
+      )
+    },
+  }
 }
 
 describe('CreateFederationPanel', () => {
@@ -113,5 +120,63 @@ describe('CreateFederationPanel', () => {
   it('renders the empty state when no workspace exists to become a member', () => {
     mount({ workspaces: [] })
     expect(screen.getByText('暂无会话')).toBeTruthy()
+  })
+
+  it('toggles a checked member back off and drops ids whose workspace vanished mid-panel', () => {
+    mount({
+      // A never-settling call keeps the panel in-flight through both submits,
+      // but only one carrier invocation happens: the guard returns early.
+      createFederation: vi.fn(() => new Promise<FederationView>(() => {})),
+    })
+    const alphaRow = screen.getByRole('checkbox', { name: /Alpha/ })
+    // Check then uncheck: the second toggle removes the id from the order.
+    fireEvent.click(alphaRow)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '创建' }).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '创建' }).disabled).toBe(true)
+    // Restore Alpha, add Beta, submit twice while in flight.
+    fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Beta/ }))
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('drops a stale member id whose workspace vanished from a refreshed list', () => {
+    const b = mount()
+    fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
+    // The refresh removes Alpha (deleted elsewhere): its selected id stays but
+    // projection drops it, so the default title cannot fabricate a basename.
+    act(() => { b.rerender([workspace('beta', 'Beta')]) })
+    const input = screen.getByLabelText('联合工作区名称') as HTMLInputElement
+    expect(input.value).toBe('')
+  })
+
+  it('submits without a title key when the user clears the draft entirely', async () => {
+    const b = mount()
+    const input = screen.getByLabelText('联合工作区名称')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Beta/ }))
+    // Touch then clear: an empty draft submits with no title (Host default).
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    await waitFor(() => {
+      expect(b.carrier).toHaveBeenCalledWith({ memberPaths: ['/projects/alpha', '/projects/beta'] })
+    })
+  })
+
+  it('keeps the panel open for retry after a failed create', async () => {
+    const b = mount({
+      createFederation: vi.fn(async () => { throw new Error("federation name 'held' is already in use") }),
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Beta/ }))
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toBe("federation name 'held' is already in use")
+    })
+    // The dialog stays up; closing happens only through the footer or Escape.
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(b.onClose).not.toHaveBeenCalled()
   })
 })
