@@ -35,6 +35,7 @@ import type {
   ApiProxy, ClientRequest, ClientResponse, HistoryEntry, HostFrame, MuxFrame, RpcReceipt,
   ModelProviderGroup, ModelSelection, RpcRequest, RpcResponse, RpcResult, ServerRequest, ServerResponse, SessionSummary,
   ToolCallView, ToolEventView, ToolResultView, WorkspaceId, WorkspaceView,
+  FederationId, FederationView,
 } from './api.ts'
 import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { AbstractApiClient, RpcId, SESSION_SEARCH_RESULT_LIMIT } from './api.ts'
@@ -1563,6 +1564,11 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
   // Registry-global archive set mirroring the host: archived sessions keep
   // their workspace accounting slot and only grouping surfaces hide them.
   const archivedSessionIds: SessionId[] = []
+  const fid = (raw: string): FederationId => raw as FederationId
+  let nextFederation = 1
+  // Empty by default: federation fixtures only materialize when a flow
+  // creates one, mirroring the host's create-time validation.
+  const federations: FederationView[] = []
 
   // In-memory browse tree behind the fixture's `browse` picker capability —
   // deterministic content mirroring the design mock so assembled Web tests
@@ -2567,7 +2573,57 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       list: request => ok(request, {
         items: workspaces.map(w => ({ ...w })),
         archivedSessionIds: [...archivedSessionIds],
+        federations: federations.map(f => ({ ...f })),
       }),
+      createFederation: (request) => {
+        const { payload } = request
+        const members = [...payload.memberPaths]
+        if (members.length < 2 || new Set(members).size !== members.length) {
+          return err(request, {
+            code: 'federation-invalid-members',
+            message: 'a federation requires two or more distinct member directories',
+            details: { path: members[0] ?? '' },
+          })
+        }
+        const title = (payload.title ?? members.map(p => p.split(/[\\/]/).pop()).join(' + ')).trim()
+        const held = federations.find(f => f.title === title)
+        if (held !== undefined) {
+          return err(request, {
+            code: 'federation-name-conflict',
+            message: `federation name '${title}' is already in use`,
+            details: { title },
+          })
+        }
+        const now = new Date().toISOString()
+        const federation: FederationView = {
+          federationId: fid(`fx-fed-${nextFederation++}`),
+          title,
+          memberPaths: members,
+          createdAt: now,
+          updatedAt: now,
+        }
+        federations.push(federation)
+        return ok(request, { federation: { ...federation }, created: true })
+      },
+      listFederations: request => ok(request, { items: federations.map(f => ({ ...f })) }),
+      renameFederation: (request) => {
+        const target = federations.find(f => f.federationId === request.payload.federationId)
+        if (target === undefined) {
+          return err(request, {
+            code: 'federation-not-found',
+            message: `federation "${request.payload.federationId}" not found`,
+            details: { federationId: request.payload.federationId },
+          })
+        }
+        target.title = request.payload.title.trim()
+        target.updatedAt = new Date().toISOString()
+        return ok(request, { federation: { ...target } })
+      },
+      deleteFederation: (request) => {
+        const index = federations.findIndex(f => f.federationId === request.payload.federationId)
+        if (index >= 0) federations.splice(index, 1)
+        return ok(request, { deleted: true as const })
+      },
       create: (request) => {
         const { path } = request.payload
         const existing = workspaces.find(w => w.path === path)
@@ -3105,6 +3161,10 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.createFederation': return this.api.workspace.createFederation(request)
+      case 'workspace.listFederations': return this.api.workspace.listFederations(request)
+      case 'workspace.renameFederation': return this.api.workspace.renameFederation(request)
+      case 'workspace.deleteFederation': return this.api.workspace.deleteFederation(request)
       case 'skill.list': return this.api.skills.list(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)
