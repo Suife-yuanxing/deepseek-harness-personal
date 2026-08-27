@@ -34,7 +34,17 @@ export interface RpcErrorDetailsMap {
   'cancelled': {}
   'session-not-found': { sessionId: SessionId }
   'model-unavailable': { provider: string; model: string }
-  'session-conflict': { sessionId: SessionId; requestedCwd: string; existingCwd?: string }
+  'session-conflict': {
+    sessionId: SessionId
+    requestedCwd: string
+    existingCwd?: string
+    requestedAdditionalRoots?: string[]
+    existingAdditionalRoots?: string[]
+  }
+  /** The deployment's federated-workspace gray switch refused a roots claim (gates creation only). */
+  'federation-disabled': {}
+  /** A claimed additional root does not canonicalize to an existing directory distinct from the cwd and siblings. */
+  'federation-invalid-members': { path: string }
   'invalid-time-zone': { value: string }
   'workspace-attach-failed': { sessionId: SessionId; workspaceId: string }
   'workspace-not-found': { workspaceId: string }

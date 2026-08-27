@@ -102,6 +102,8 @@ export const sessionSearchValueSchema = z.object({
 export const sessionCreateRequestSchema = z.object({
   workspaceId: workspaceIdSchema.optional(),
   cwd: z.string().optional(),
+  /** Additional writable roots; gated by the deployment's federated-workspace switch host-side. */
+  additionalRoots: z.array(z.string().min(1)).max(16).optional(),
   sessionId: sessionIdSchema.optional(),
   agentPreset: z.string().optional(),
 }).refine(

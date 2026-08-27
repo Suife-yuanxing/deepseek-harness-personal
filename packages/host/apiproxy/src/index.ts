@@ -59,6 +59,15 @@ export interface Config {
    * @default 1024
    */
   coldBlankProbeMaxBytes?: number
+  /**
+   * The federated-workspace gray switch. GATES CREATION ONLY: when enabled a
+   * `sessions.create` request may claim additional writable roots, which are
+   * validated and fixed onto the session header; when disabled (the default)
+   * such requests fail with `federation-disabled`, while already-durable
+   * federated sessions keep resolving their roots on every call.
+   * @default false
+   */
+  federatedWorkspacesEnabled?: boolean
 }
 
 /**
@@ -77,6 +86,7 @@ export class ApiProxyService extends Service implements ApiProxy {
     sessionExportCompressionLevel: z.number().step(1).min(0).max(9)
       .default(DEFAULT_SESSION_LOG_COMPRESSION_LEVEL) as z<SessionLogCompressionLevel>,
     coldBlankProbeMaxBytes: z.natural().default(DEFAULT_COLD_BLANK_PROBE_MAX_BYTES),
+    federatedWorkspacesEnabled: z.boolean().default(false),
   })
 
   readonly sessions: ApiProxy['sessions']
@@ -106,6 +116,9 @@ export class ApiProxyService extends Service implements ApiProxy {
       ...(config.coldBlankProbeMaxBytes === undefined
         ? {}
         : { coldBlankProbeMaxBytes: config.coldBlankProbeMaxBytes }),
+      ...(config.federatedWorkspacesEnabled === undefined
+        ? {}
+        : { federatedWorkspacesEnabled: config.federatedWorkspacesEnabled }),
     })
     this.sessions = api.sessions
     this.subagents = api.subagents

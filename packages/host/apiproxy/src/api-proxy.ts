@@ -4,8 +4,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { realpathSync, statSync } from 'node:fs'
 import { mkdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
@@ -667,6 +668,15 @@ export interface ApiProxyDefaults {
    * falls back to platform detection ({@link canOpenNativePath}).
    */
   canOpenPath?: () => boolean
+  /**
+   * The federated-workspace gray switch. GATES CREATION ONLY: `true` lets a
+   * session.create request claim `additionalRoots`; absent/false rejects
+   * such requests with `federation-disabled`, while resolution of any
+   * already-durable roots keeps working. Explicitly `=== true` at the single
+   * resolve step inside {@link createApiProxy} — the fail-safe direction is
+   * disabled.
+   */
+  federatedWorkspacesEnabled?: boolean
 }
 
 /** The tool/call payload fields the presenter path reads. */
@@ -1047,12 +1057,99 @@ class SessionCwdConflict extends Error {
     readonly sessionId: SessionId,
     readonly requestedCwd: string,
     readonly existingCwd: string | undefined,
+    /** Claimed-but-absent on either side (or a member mismatch) when provided. */
+    readonly requestedRoots?: readonly string[],
+    readonly existingRoots?: readonly string[],
   ) {
     super(
       `session "${sessionId}" already exists with cwd ${JSON.stringify(existingCwd)}; `
-      + `requested ${JSON.stringify(requestedCwd)}`,
+      + `requested ${JSON.stringify(requestedCwd)}`
+      + (requestedRoots === undefined && existingRoots === undefined
+        ? ''
+        : `; additional roots differ: requested ${JSON.stringify(requestedRoots ?? [])}, `
+          + `existing ${JSON.stringify(existingRoots ?? [])}`),
     )
   }
+}
+
+/** One requested additional root failed federated-membership validation. */
+class AdditionalRootInvalidError extends Error {
+  constructor(
+    readonly rawPath: string,
+    reason: 'not-a-directory' | 'duplicate' | 'equals-cwd',
+  ) {
+    super(
+      `additional root ${JSON.stringify(rawPath)} is invalid: ${
+        reason === 'not-a-directory'
+          ? 'it does not resolve to an existing directory'
+          : reason === 'duplicate'
+            ? 'it duplicates another requested root'
+            : 'it equals the session project cwd'
+      }`,
+    )
+    this.name = 'AdditionalRootInvalidError'
+  }
+}
+
+/**
+ * Canonicalize one additional-root candidate: its real filesystem identity,
+ * or `undefined` when the path does not exist or is not a directory.
+ */
+function canonicalDirectoryRoot(raw: string): string | undefined {
+  try {
+    const resolved = realpathSync.native(raw)
+    return statSync(resolved).isDirectory() ? resolved : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Best-effort canonical form of the request's project cwd, used ONLY as the
+ * duplication baseline while members are validated BEFORE the cwd itself is
+ * created (a brand-new project path has nothing to realpath yet).
+ */
+function baselineForDuplicateCheck(cwd: string): string {
+  try {
+    return realpathSync.native(cwd)
+  } catch {
+    return resolvePath(cwd)
+  }
+}
+
+/**
+ * Resolve one create request's optional additional roots into the durable
+ * header list. The explicit validation step behind the gray switch: every
+ * member must canonicalize to an existing directory distinct from the cwd
+ * and from earlier siblings; duplicates collapse via canonical equality.
+ * Empty input means an ordinary single-root session.
+ * @param requested - the wire list; callers omit it for unclaimed requests.
+ * @param cwd - the resolved project cwd for this creation.
+ * @returns the canonical root list to persist.
+ */
+function resolveAdditionalRoots(requested: readonly string[], cwd: string): string[] {
+  const baseline = baselineForDuplicateCheck(cwd)
+  const roots: string[] = []
+  for (const raw of requested) {
+    const canonical = canonicalDirectoryRoot(raw)
+    if (canonical === undefined) throw new AdditionalRootInvalidError(raw, 'not-a-directory')
+    if (!isAbsolute(canonical)) throw new AdditionalRootInvalidError(raw, 'not-a-directory')
+    if (canonical === baseline || roots.includes(canonical)) {
+      throw new AdditionalRootInvalidError(raw, canonical === baseline ? 'equals-cwd' : 'duplicate')
+    }
+    roots.push(canonical)
+  }
+  return roots
+}
+
+/**
+ * Claim equality between two durable root lists: same length, same canonical
+ * entries in the same creation-fixed order.
+ */
+function sameRootList(a?: readonly string[], b?: readonly string[]): boolean {
+  const left = a ?? []
+  const right = b ?? []
+  return left.length === right.length && left.every((root, index) => root === right[index])
 }
 
 /** An explicit Host naming operation would duplicate another Workspace title. */
@@ -1104,6 +1201,9 @@ function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceVie
  * @returns the ApiProxy implementation.
  */
 export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiProxy {
+  // The one explicit gray-switch resolve step: creation claims are accepted
+  // only under `=== true`; undefined keeps every existing assembly disabled.
+  const federatedWorkspacesEnabled = defaults.federatedWorkspacesEnabled === true
   const sessionExportCompressionLevel = defaults.sessionExportCompressionLevel
     ?? DEFAULT_SESSION_LOG_COMPRESSION_LEVEL
   const coldBlankProbeMaxBytes = defaults.coldBlankProbeMaxBytes
@@ -1620,6 +1720,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     cwd: string,
     checkPersistedIdentity: boolean,
     presetId?: string,
+    /** The create request's claimed roots; absent when the request claims none. */
+    additionalRoots?: readonly string[],
   ): Promise<Agent> {
     let creation = sessionCreations.get(sessionId)
     if (creation === undefined) {
@@ -1645,6 +1747,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }
           if (inspected.meta.cwd !== cwd) {
             throw new SessionCwdConflict(sessionId, cwd, inspected.meta.cwd)
+          }
+          // External-tamper guard for federated identities: a retry must
+          // claim exactly the durable root list (a request claiming no roots
+          // resumes unchanged — its absence is not a conflicting claim).
+          if (additionalRoots !== undefined && !sameRootList(additionalRoots, inspected.meta.additionalRoots)) {
+            throw new SessionCwdConflict(
+              sessionId, cwd, inspected.meta.cwd, additionalRoots, inspected.meta.additionalRoots,
+            )
           }
           // Resolved from the log, not the header: a session that switched
           // while blank ran every turn under the newer composition.
@@ -1672,6 +1782,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           agentOptions: agentOptions(),
           meta: {
             cwd,
+            ...additionalRoots === undefined ? {} : { additionalRoots },
             ...composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset },
           },
           setup: composition.setup,
@@ -1702,6 +1813,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     assertPresetUnchanged(sessionId, presetId, resolveSessionPreset(agent.session))
     if (agent.session.header.cwd !== cwd) {
       throw new SessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
+    }
+    if (additionalRoots !== undefined && !sameRootList(additionalRoots, agent.session.header.additionalRoots)) {
+      throw new SessionCwdConflict(
+        sessionId, cwd, agent.session.header.cwd, additionalRoots, agent.session.header.additionalRoots,
+      )
     }
     return agent
   }
@@ -2166,6 +2282,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async create(request) {
         const sessionId = request.payload.sessionId ?? `session-${randomUUID()}` as SessionId
+        // Gray switch FIRST, before any filesystem or registry effect: a
+        // disabled deployment must reject a roots claim without side effects.
+        if (request.payload.additionalRoots !== undefined && !federatedWorkspacesEnabled) {
+          return err(request, {
+            code: 'federation-disabled',
+            message: 'federated workspaces are disabled in this deployment',
+            details: {},
+          })
+        }
         let workspace: Workspace | undefined
         if (request.payload.workspaceId !== undefined) {
           workspace = ctx.workspaceRegistry.get(brandWorkspaceId(request.payload.workspaceId))
@@ -2179,8 +2304,25 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         const cwd = workspace?.path ?? request.payload.cwd ?? defaults.cwd
         const requestedPreset = request.payload.agentPreset
+        // The explicit resolve step for the federation claim: canonical
+        // members only; an empty list collapses to an ordinary session.
+        let additionalRoots: readonly string[] | undefined
+        if (request.payload.additionalRoots !== undefined && request.payload.additionalRoots.length > 0) {
+          try {
+            additionalRoots = resolveAdditionalRoots(request.payload.additionalRoots, cwd)
+          } catch (error: unknown) {
+            if (error instanceof AdditionalRootInvalidError) {
+              return err(request, {
+                code: 'federation-invalid-members',
+                message: error.message,
+                details: { path: error.rawPath },
+              })
+            }
+            throw error
+          }
+        }
         try {
-          await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset)
+          await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset, additionalRoots)
         } catch (error: unknown) {
           if (error instanceof AgentPresetConflict) {
             return err(request, {
@@ -2203,6 +2345,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 sessionId: error.sessionId,
                 requestedCwd: error.requestedCwd,
                 ...error.existingCwd === undefined ? {} : { existingCwd: error.existingCwd },
+                ...error.requestedRoots === undefined && error.existingRoots === undefined
+                  ? {}
+                  : { requestedAdditionalRoots: [...error.requestedRoots ?? []], existingAdditionalRoots: [...error.existingRoots ?? []] },
               },
             })
           }

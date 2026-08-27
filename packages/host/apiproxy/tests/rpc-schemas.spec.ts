@@ -195,6 +195,14 @@ describe('sessions domain schemas', () => {
     // The refine's both-sides branch: workspaceId alone passes, workspaceId+cwd rejects.
     expect(sessionCreateRequestSchema.parse({ workspaceId: 'w1', sessionId: 's1' }).sessionId).toBe('s1')
     expect(() => sessionCreateRequestSchema.parse({ workspaceId: 'w1', cwd: '/w' })).toThrow(/not both/)
+    // Federated claim shape: list entries non-empty, bounded at 16, empty = ordinary.
+    expect(sessionCreateRequestSchema.parse({ cwd: '/w', additionalRoots: ['/x'] }).additionalRoots).toEqual(['/x'])
+    expect(sessionCreateRequestSchema.parse({ cwd: '/w', additionalRoots: [] }).additionalRoots).toEqual([])
+    expect(() => sessionCreateRequestSchema.parse({ cwd: '/w', additionalRoots: [''] })).toThrow()
+    expect(() => sessionCreateRequestSchema.parse({
+      cwd: '/w',
+      additionalRoots: Array.from({ length: 17 }, (_, index) => `/root-${index}`),
+    })).toThrow()
     expect(sessionCreateValueSchema.parse({ sessionId: 's1' }).sessionId).toBe('s1')
     expect(sessionHistoryRequestSchema.parse({ sessionId: 's1', beforeSeq: 3, maxMessages: 5 }).beforeSeq).toBe(3)
     expect(() => sessionHistoryRequestSchema.parse({ sessionId: 's1', maxMessages: 0 })).toThrow()

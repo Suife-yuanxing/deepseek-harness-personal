@@ -251,6 +251,13 @@ export interface SessionsApi {
    * creation attaches the session after publication; an attach failure
    * returns `workspace-attach-failed` with the published session id.
    *
+   * `additionalRoots` names extra writable directories fixed on the session
+   * header (federated workspaces). The deployment's gray switch gates it:
+   * off (the default) rejects any request carrying the field with
+   * `federation-disabled`; on, every entry must canonicalize to an existing
+   * directory distinct from the cwd and from its siblings, otherwise
+   * `federation-invalid-members`. An empty array is an ordinary session.
+   *
    * `agentPreset` names the composition the new session's agent is built
    * from; omitted, the effective default applies — the user's stored choice
    * where one exists, else the deployment's own. The resolved id is stored on
@@ -258,7 +265,13 @@ export interface SessionsApi {
    * id fails with `agent-preset-not-found`, and a preset whose composition
    * cannot be mounted fails with `agent-preset-invalid`.
    */
-  create(request: RpcRequest<{ workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId; agentPreset?: string }>):
+  create(request: RpcRequest<{
+    workspaceId?: WorkspaceId
+    cwd?: string
+    sessionId?: SessionId
+    agentPreset?: string
+    additionalRoots?: string[]
+  }>):
   Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string }>>
 
   /**
