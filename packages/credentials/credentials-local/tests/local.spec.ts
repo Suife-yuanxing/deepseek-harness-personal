@@ -273,6 +273,55 @@ describe('document validation', () => {
   })
 })
 
+describe('version-1 layout (0.1.1 dual-track documents)', () => {
+  // The layout the 0.1.1 line writes: entries nest under `refs:` beside an
+  // optional `records:` section this build does not consume. Reading it is
+  // what lets the local runtime share one home with the official track.
+  const VERSIONED = 'version: 1\nrefs:\n  DSH_CRED_TEST: stored\n  DSH_CRED_OTHER: kept\nrecords:\n  "host/some-id":\n    kind: oauth\n'
+
+  it('reads entries from the nested refs section and ignores records', async () => {
+    const dir = await tempDir()
+    const path = join(dir, '.credentials.yaml')
+    await writeCredentials(path, VERSIONED)
+    const ctx = await boot({ path, watch: false })
+    expect(await ctx.credentials.resolve(KEY)).toEqual({ value: 'stored', source: 'file' })
+    expect(await ctx.credentials.resolve(OTHER)).toEqual({ value: 'kept', source: 'file' })
+  })
+
+  it.each([
+    ['a version other than 1', 'version: 2\nrefs: {}\n', /declares version 2/],
+    ['a string version', 'version: "1"\nrefs: {}\n', /declares version "1"/],
+    ['an unknown top-level key', 'version: 1\nrefs: {}\nextra: 1\n', /unknown top-level key "extra"/],
+    ['a non-mapping refs section', 'version: 1\nrefs: flat\n', /"refs" in .*must be a mapping/],
+  ])('fails boot on %s', async (_case, text, message) => {
+    const dir = await tempDir()
+    const path = join(dir, '.credentials.yaml')
+    await writeCredentials(path, text)
+    const ctx = new Context()
+    await expect(ctx.plugin(LocalCredentialProvider, { path, watch: false })).rejects.toThrow(message)
+  })
+
+  it('edits under refs and preserves records and comments byte for byte', async () => {
+    const dir = await tempDir()
+    const path = join(dir, '.credentials.yaml')
+    await writeCredentials(path, '# dual-track home\nversion: 1\nrefs:\n  DSH_CRED_OTHER: kept\n  DSH_CRED_TEST: old\nrecords:\n  "host/id":\n    kind: oauth\n')
+    const ctx = await boot({ path, watch: false })
+    await ctx.credentials.set(KEY, 'new value!')
+    expect(await readFile(path, 'utf8')).toBe(
+      '# dual-track home\nversion: 1\nrefs:\n  DSH_CRED_OTHER: kept\n  DSH_CRED_TEST: new value!\nrecords:\n  "host/id":\n    kind: oauth\n',
+    )
+  })
+
+  it('unsets only the owning entry inside refs', async () => {
+    const dir = await tempDir()
+    const path = join(dir, '.credentials.yaml')
+    await writeCredentials(path, 'version: 1\nrefs:\n  DSH_CRED_TEST: gone\n  DSH_CRED_OTHER: stays\n')
+    const ctx = await boot({ path, watch: false })
+    await ctx.credentials.unset(KEY)
+    expect(await readFile(path, 'utf8')).toBe('version: 1\nrefs:\n  DSH_CRED_OTHER: stays\n')
+  })
+})
+
 describe('document writes', () => {
   it('adds a missing key to a fresh 0600 document and emits the commit', async () => {
     const dir = await tempDir()
@@ -280,7 +329,10 @@ describe('document writes', () => {
     const ctx = await boot({ path, watch: false })
     const seen = updates(ctx)
     await ctx.credentials.set(KEY, 'sk-fresh')
-    expect(await readFile(path, 'utf8')).toBe('DSH_CRED_TEST: sk-fresh\n')
+    // A fresh document starts as the version-1 envelope, the layout current
+    // builds read — the dual-track home must never be handed a flat document
+    // the official track would refuse.
+    expect(await readFile(path, 'utf8')).toBe('version: 1\nrefs:\n  DSH_CRED_TEST: sk-fresh\n')
     if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600)
     expect(await ctx.credentials.resolve(KEY)).toEqual({ value: 'sk-fresh', source: 'file' })
     expect(seen).toEqual([KEY])
@@ -369,7 +421,7 @@ describe('document writes', () => {
     const good = ctx.credentials.set(OTHER, 'lands')
     await bad
     await good
-    expect(await readFile(path, 'utf8')).toBe('DSH_CRED_OTHER: lands\n')
+    expect(await readFile(path, 'utf8')).toBe('version: 1\nrefs:\n  DSH_CRED_OTHER: lands\n')
   })
 
   it('serializes concurrent writes so both land in the one document', async () => {
@@ -380,7 +432,7 @@ describe('document writes', () => {
       ctx.credentials.set(KEY, 'one'),
       ctx.credentials.set(OTHER, 'two'),
     ])
-    expect(await readFile(path, 'utf8')).toBe('DSH_CRED_TEST: one\nDSH_CRED_OTHER: two\n')
+    expect(await readFile(path, 'utf8')).toBe('version: 1\nrefs:\n  DSH_CRED_TEST: one\n  DSH_CRED_OTHER: two\n')
   })
 
   it('refuses writes after disposal', async () => {

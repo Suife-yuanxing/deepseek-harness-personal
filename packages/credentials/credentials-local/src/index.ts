@@ -140,13 +140,22 @@ function describeYamlError(error: YAMLError): string {
 }
 
 /**
- * Parse one credentials document into its entries. The document is a strict
- * mapping of {@link CredentialRef} to non-empty string: a non-mapping root, a
- * key that is not a POSIX identifier, a non-string value, and an empty string
- * are all rejected rather than skipped, because this file holds nothing but
- * credentials and a silently ignored entry reads as "the key I stored has no
- * effect". Duplicate keys surface as parser errors. An empty document is an
- * empty store.
+ * Parse one credentials document into its entries. Two layouts are admitted so
+ * one home directory keeps working across the dsh runtime dual track:
+ *
+ * - version 1 (the 0.1.1 line): a `version: 1` envelope whose entries nest
+ *   under `refs:`, with an optional `records:` section beside them. The
+ *   records are metadata this build does not consume; reads ignore them and
+ *   writes edit around them, so they survive untouched. Anything beyond the
+ *   three known top-level keys, a `version` other than the number 1, and a
+ *   non-mapping `refs` section are rejected.
+ * - pre-release flat (≤ 0.1.0): the entire document is the mapping.
+ *
+ * Either way a non-mapping root, a key that is not a POSIX identifier, a
+ * non-string value, and an empty string are all rejected rather than skipped,
+ * because this file holds nothing but credentials and a silently ignored
+ * entry reads as "the key I stored has no effect". Duplicate keys surface as
+ * parser errors. An empty document is an empty store.
  * @param text - the document's text.
  * @param filename - absolute path, quoted in errors.
  * @returns the parsed entries, keyed by reference.
@@ -166,8 +175,37 @@ export function parseCredentialsDocument(text: string, filename: string): Map<st
   if (typeof root !== 'object' || root === null || Array.isArray(root)) {
     throw new TypeError(`credentials-local: ${filename} must be a mapping of credential reference to value`)
   }
+  const fields = root as Record<string, unknown>
+  if ('version' in fields) {
+    if (fields.version !== 1) {
+      throw new Error(`credentials-local: ${filename} declares version ${JSON.stringify(fields.version)}; this build reads version 1`)
+    }
+    for (const key of Object.keys(fields)) {
+      if (key !== 'version' && key !== 'refs' && key !== 'records') {
+        throw new Error(`credentials-local: unknown top-level key "${key}" in ${filename}`)
+      }
+    }
+    return parseCredentialEntries(fields.refs, 'refs', filename)
+  }
+  return parseCredentialEntries(fields, undefined, filename)
+}
+
+/**
+ * Admit one entry section — the version-1 `refs` mapping (`name` set) or the
+ * whole flat document (`name` undefined) — under the shared entry contract.
+ * @param section - the mapping to read; `undefined`/`null` is an empty store.
+ * @param name - section name for diagnostics, omitted for the flat root.
+ * @param filename - absolute path, quoted in errors.
+ * @returns the parsed entries, keyed by reference.
+ */
+function parseCredentialEntries(section: unknown, name: string | undefined, filename: string): Map<string, string> {
   const entries = new Map<string, string>()
-  for (const [key, value] of Object.entries(root as Record<string, unknown>)) {
+  if (section === undefined || section === null) return entries
+  if (typeof section !== 'object' || Array.isArray(section)) {
+    const where = name === undefined ? filename : `"${name}" in ${filename}`
+    throw new TypeError(`credentials-local: ${where} must be a mapping of credential reference to value`)
+  }
+  for (const [key, value] of Object.entries(section as Record<string, unknown>)) {
     // credentialRef throws on anything that is not a POSIX identifier, which
     // is exactly the constraint a stored reference must satisfy to be
     // addressable through the seam.
@@ -188,7 +226,12 @@ export function parseCredentialsDocument(text: string, filename: string): Map<st
 /**
  * Render the next document text with one reference set or deleted. Editing
  * the parsed document rather than rebuilding it keeps comments and the
- * formatting of every untouched entry; an absent document starts a fresh one.
+ * formatting of every untouched entry. The edit address follows the on-disk
+ * layout — nested under `refs:` when a `version` key is present, at the root
+ * otherwise — so a document written here keeps parsing on both sides of the
+ * dsh runtime dual track, and a `records:` section the read path ignores
+ * survives byte for byte. An absent document starts a fresh version-1
+ * envelope, the layout current builds read.
  * @param text - the current document text, `undefined` while the file is absent.
  * @param ref - the reference to write.
  * @param value - the new value, or `undefined` to delete the key.
@@ -197,9 +240,10 @@ export function parseCredentialsDocument(text: string, filename: string): Map<st
 function renderDocument(text: string | undefined, ref: CredentialRef, value: string | undefined): string {
   // `text` only ever caches content that parsed successfully, so this re-parse
   // for the mutable comment-preserving tree cannot fail.
-  const document = text === undefined ? new Document({}) : parseDocument(text)
-  if (value === undefined) document.deleteIn([ref])
-  else document.setIn([ref], value)
+  const document = text === undefined ? new Document({ version: 1, refs: {} }) : parseDocument(text)
+  const path = document.getIn(['version']) === undefined ? [ref] : ['refs', ref]
+  if (value === undefined) document.deleteIn(path)
+  else document.setIn(path, value)
   return document.toString()
 }
 
