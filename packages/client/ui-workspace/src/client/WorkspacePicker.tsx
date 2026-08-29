@@ -38,8 +38,9 @@ const ADD_FEDERATION = '::add-federation'
  * Stacked-folders glyph: two offset rounded rectangles carrying the
  * multi-root semantics of a federation row. Per-instance (not a shared
  * icon-library export) because the two-plane offset is this feature's visual.
+ * Exported for the browser's federation management rows (same package).
  */
-function StackedFoldersIcon(): ReactNode {
+export function StackedFoldersIcon(): ReactNode {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <rect x="3.5" y="1.5" width="10" height="9" rx="1.5" fill="currentColor" opacity={0.45} />
@@ -49,7 +50,7 @@ function StackedFoldersIcon(): ReactNode {
 }
 
 /** Tooltip lines: every member path basename, the primary root first and marked. */
-function federationTooltipLines(federation: FederationView, t: WorkspacePickFlowProps['t']): string {
+export function federationTooltipLines(federation: FederationView, t: WorkspacePickFlowProps['t']): string {
   return federation.memberPaths
     .map((path, index) => index === 0 ? `${t('federation.panel.primary')} ${basenameOf(path)}` : basenameOf(path))
     .join('\n')
@@ -71,7 +72,7 @@ function federationEntry(federation: FederationView, t: WorkspacePickFlowProps['
 }
 
 /** Everything after the last path separator (Windows and POSIX forms). */
-function basenameOf(path: string): string {
+export function basenameOf(path: string): string {
   const tail = path.split(/[\\/]/).pop()
   return tail ?? ''
 }

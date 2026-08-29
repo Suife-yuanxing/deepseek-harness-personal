@@ -104,6 +104,8 @@ export function apply(ctx: ClientContext): void {
       const sessionId = await ctx.workspaces.startFederatedSession(federationId)
       ctx.sessions.open(sessionId)
     },
+    renameFederation: async (federationId, title) => { await ctx.workspaces.renameFederation(federationId, title) },
+    deleteFederation: async (federationId) => { await ctx.workspaces.deleteFederation(federationId) },
     hooks: { directoryFlow: browserFlowSource },
   })
   const pickerInjected = (): WorkspacePickerInjected => ({

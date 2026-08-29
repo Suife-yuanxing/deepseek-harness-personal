@@ -28,6 +28,67 @@
 
 /* ---- create-federation panel ---- */
 
+/* Browser management block: durable federation rows above the session tree.
+ * Rows are management-only (rename/delete); the actions button reveals on
+ * hover or while its menu is open, mirroring the tree rows' affordance. */
+.fedBrowser {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--dsw-alias-border);
+}
+
+.fedBrowserTitle {
+  padding: 0 8px 4px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.fedRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.fedRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.fedRowIcon {
+  flex: none;
+  display: inline-flex;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.fedRowTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.fedRowActions {
+  flex: none;
+  display: inline-flex;
+  opacity: 0;
+}
+
+.fedRow:hover .fedRowActions,
+.fedRow.menuOpen .fedRowActions {
+  opacity: 1;
+}
+
 /* Dialog footer buttons share the pick flow dialog's width floor geometry. */
 .modalAction {
   min-width: 72px;

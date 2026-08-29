@@ -12,19 +12,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconCloseFill14, IconPersonalizationOutline16,
-  IconProjectAddOutline16, IconSearchOutline16, Menu, Modal, Tooltip,
+  Button, IconCloseFill14, IconEditOutline16, IconEllipsisOutline16,
+  IconPersonalizationOutline16, IconProjectAddOutline16, IconSearchOutline16,
+  IconTrashOutline16, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
+  FederationId, FederationView, SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
 import { deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
-import { WorkspacePickFlow } from './WorkspacePicker.tsx'
+import { StackedFoldersIcon, federationTooltipLines, WorkspacePickFlow } from './WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
+import cssFed from './Federations.module.css'
 
 /**
  * Column slide length (--ds-transition-duration-slow): rail-search focus waits it out —
@@ -734,6 +736,62 @@ function SearchResults({
 }
 
 /**
+ * One federation management row in the browser's federation block: the
+ * stacked-folders glyph, the title (member tooltip, primary root first),
+ * the ×N badge, and a hover menu with rename/delete. Rows are management
+ * only — federation sessions group under the primary workspace like any
+ * other session, so a row click starts nothing.
+ */
+function FederationRow({
+  federation, t, onRenameRequest, onDeleteRequest,
+}: {
+  federation: FederationView
+  t: WorkspaceBrowserProps['t']
+  onRenameRequest: (federation: FederationView) => void
+  onDeleteRequest: (federation: FederationView) => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  return (
+    <div className={clsx(cssFed.fedRow, menuOpen && cssFed.menuOpen)}>
+      <span className={cssFed.fedRowIcon}><StackedFoldersIcon /></span>
+      <span className={cssFed.fedRowTitle} title={federationTooltipLines(federation, t)}>{federation.title}</span>
+      <span className={cssFed.fedBadge}>×{federation.memberPaths.length}</span>
+      <span className={cssFed.fedRowActions}>
+        <Menu
+          open={menuOpen}
+          onClose={() => { setMenuOpen(false) }}
+          items={[
+            { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
+            { id: 'delete', label: t('federation.delete.title'), icon: <IconTrashOutline16 />, danger: true },
+          ]}
+          onSelect={(id) => {
+            setMenuOpen(false)
+            // Unknown ids leave before the dispatch: a future menu row must
+            // not inherit the destructive branch as an else fallback.
+            /* v8 ignore next -- the items array carries exactly these two rows today. */
+            if (id !== 'rename' && id !== 'delete') return
+            if (id === 'rename') onRenameRequest(federation)
+            else onDeleteRequest(federation)
+          }}
+          portal
+          closeOnPointerLeave
+          anchor={(
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('federation.actions.aria', { name: federation.title })}
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+            >
+              <IconEllipsisOutline16 />
+            </button>
+          )}
+        />
+      </span>
+    </div>
+  )
+}
+
+/**
  * Render the browsing region.
  * @param props - composed slot props (shell owner share + store + injected actions).
  * @returns the region element tree.
@@ -757,6 +815,8 @@ export function WorkspaceBrowser({
   createWorkspace,
   createFederation,
   startFederatedSession,
+  renameFederation,
+  deleteFederation,
   searchSessions,
   searchResultLimit,
   useDirectoryFlow,
@@ -766,6 +826,7 @@ export function WorkspaceBrowser({
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
+  const federations = useWorkspaces(state => state.federations)
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -974,6 +1035,62 @@ export function WorkspaceBrowser({
     })
   }
 
+  // Federation rename dialog (browser-owned, same pattern as the workspace
+  // rename; the duplicate rule reads the federation title set).
+  const [fedRenameTarget, setFedRenameTarget] = useState<{ federationId: FederationId; currentTitle: string } | null>(null)
+  const [fedRenameDraft, setFedRenameDraft] = useState('')
+  const [fedRenaming, setFedRenaming] = useState(false)
+  const [fedRenameError, setFedRenameError] = useState<string | null>(null)
+  const fedRenameTrimmed = fedRenameDraft.trim()
+  const fedRenameDuplicate = fedRenameTarget !== null && fedRenameTrimmed !== ''
+    && fedRenameTrimmed !== fedRenameTarget.currentTitle
+    && federations.some(federation => federation.title === fedRenameTrimmed)
+  const fedRenameBlocked = fedRenaming || fedRenameTrimmed === ''
+    || fedRenameTarget === null || fedRenameTrimmed === fedRenameTarget.currentTitle || fedRenameDuplicate
+  const closeFedRename = () => {
+    if (fedRenaming) return
+    setFedRenameTarget(null)
+    setFedRenameError(null)
+  }
+  const confirmFedRename = () => {
+    if (fedRenameBlocked) return
+    setFedRenaming(true)
+    setFedRenameError(null)
+    renameFederation(fedRenameTarget.federationId, fedRenameTrimmed).then(() => {
+      setFedRenaming(false)
+      setFedRenameTarget(null)
+    }).catch((reason: unknown) => {
+      setFedRenaming(false)
+      setFedRenameError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
+  // Federation delete dialog: purely de-registering (directories, workspaces,
+  // and session logs remain; existing federated sessions keep resolving), so
+  // the dialog closes when the unary answer lands — the row disappears from
+  // the list state when the follow-up baseline refresh converges.
+  const [fedDeleteTarget, setFedDeleteTarget] = useState<{ federationId: FederationId; title: string } | null>(null)
+  const [fedDeleting, setFedDeleting] = useState(false)
+  const [fedDeleteError, setFedDeleteError] = useState<string | null>(null)
+  const closeFedDelete = () => {
+    if (fedDeleting) return
+    setFedDeleteTarget(null)
+    setFedDeleteError(null)
+  }
+  const confirmFedDelete = () => {
+    /* v8 ignore next -- the Modal is absent without a target and its button is disabled while deleting. */
+    if (fedDeleting || fedDeleteTarget === null) return
+    setFedDeleting(true)
+    setFedDeleteError(null)
+    deleteFederation(fedDeleteTarget.federationId).then(() => {
+      setFedDeleting(false)
+      setFedDeleteTarget(null)
+    }).catch((reason: unknown) => {
+      setFedDeleting(false)
+      setFedDeleteError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
   return (
     <div className={clsx(css.root, !wide && css.rail)}>
       <div className={css.sectionHeader}>
@@ -1110,6 +1227,31 @@ export function WorkspaceBrowser({
       {/* Always-mounted seat keeps the region's flex slot while the list
           itself is wide-only. */}
       <div className={css.listArea}>
+        {/* Federation management block: durable compositions with no session
+            grouping of their own. Wide-only (the rail has no room and the
+            dialogs are wide-only features); hidden entirely while the list
+            holds none, so a federation-free install renders exactly as before. */}
+        {wide && federations.length > 0 && (
+          <div className={cssFed.fedBrowser} role="group" aria-label={t('federation.browser.title')}>
+            <div className={cssFed.fedBrowserTitle}>{t('federation.browser.title')}</div>
+            {federations.map(federation => (
+              <FederationRow
+                key={federation.federationId}
+                federation={federation}
+                t={t}
+                onRenameRequest={(target) => {
+                  setFedRenameTarget({ federationId: target.federationId, currentTitle: target.title })
+                  setFedRenameDraft(target.title)
+                  setFedRenameError(null)
+                }}
+                onDeleteRequest={(target) => {
+                  setFedDeleteTarget({ federationId: target.federationId, title: target.title })
+                  setFedDeleteError(null)
+                }}
+              />
+            ))}
+          </div>
+        )}
         {wide && (normalizedQuery !== ''
           ? (
             <SearchResults
@@ -1260,6 +1402,67 @@ export function WorkspaceBrowser({
       >
         {deleting && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
         {deleteError !== null && <div className={css.renameError} role="alert">{deleteError}</div>}
+      </Modal>
+
+      <Modal
+        open={fedRenameTarget !== null}
+        onClose={closeFedRename}
+        closeLabel={t('close')}
+        title={t('rename.federation.title')}
+        footer={(
+          <>
+            <Button variant="outline" disabled={fedRenaming} onClick={closeFedRename}>{t('cancel')}</Button>
+            <Button variant="primary" disabled={fedRenameBlocked} onClick={confirmFedRename}>{t('rename')}</Button>
+          </>
+        )}
+      >
+        <input
+          className={css.renameInput}
+          value={fedRenameDraft}
+          aria-label={t('field.federationName')}
+          autoFocus
+          disabled={fedRenaming}
+          onFocus={(e) => { e.target.select() }}
+          onChange={(e) => { setFedRenameDraft(e.target.value); setFedRenameError(null) }}
+          onCompositionStart={() => { composingRef.current = true }}
+          onCompositionEnd={() => { composingRef.current = false }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !composingRef.current) {
+              e.preventDefault()
+              confirmFedRename()
+            }
+          }}
+        />
+        {fedRenameDuplicate && (
+          <div className={css.renameError} role="alert">{t('federation.conflict.named', { name: fedRenameTrimmed })}</div>
+        )}
+        {fedRenameError !== null && <div className={css.renameError} role="alert">{fedRenameError}</div>}
+      </Modal>
+
+      <Modal
+        open={fedDeleteTarget !== null}
+        onClose={closeFedDelete}
+        closeLabel={t('close')}
+        title={t('federation.delete.title')}
+        {...fedDeleteTarget === null
+          ? {}
+          : { description: t('federation.delete.desc', { name: fedDeleteTarget.title }) }}
+        footer={(
+          <>
+            <Button variant="outline" disabled={fedDeleting} onClick={closeFedDelete}>{t('cancel')}</Button>
+            <Button
+              variant="outline"
+              className={css.deleteAction}
+              disabled={fedDeleting}
+              onClick={confirmFedDelete}
+            >
+              {t('federation.delete.confirm')}
+            </Button>
+          </>
+        )}
+      >
+        {fedDeleting && <div className={css.deleteStatus} role="status">{t('federation.delete.pending')}</div>}
+        {fedDeleteError !== null && <div className={css.renameError} role="alert">{fedDeleteError}</div>}
       </Modal>
     </div>
   )

@@ -143,6 +143,16 @@ export type WorkspaceBrowserInjected = DirectoryPickingInjected & {
   createFederation: (input: { title?: string; memberPaths: string[] }) => Promise<FederationView>
   /** Start (and open) a session claimed from a durable federation identity. */
   startFederatedSession: (federationId: FederationId) => Promise<void>
+  /**
+   * Rename a federation (rejects on name conflict; resolves on durability —
+   * the list state converges through the follow-up baseline refresh).
+   */
+  renameFederation: (federationId: FederationId, title: string) => Promise<void>
+  /**
+   * Delete only a federation registration; member directories, workspaces,
+   * and session logs remain, and existing federated sessions keep resolving.
+   */
+  deleteFederation: (federationId: FederationId) => Promise<void>
 }
 
 /** Full browser props: shell owner share + viewing store + injected actions + the locale seat. */
