@@ -24,7 +24,7 @@ import type { SessionNode, SessionOrderBy } from './tree.ts'
 import { deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
-import { StackedFoldersIcon, federationTooltipLines, WorkspacePickFlow } from './WorkspacePicker.tsx'
+import { StackedFoldersIcon, federationTooltipLines, hasMissingMembers, WorkspacePickFlow } from './WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
 import cssFed from './Federations.module.css'
 
@@ -755,6 +755,9 @@ function FederationRow({
     <div className={clsx(cssFed.fedRow, menuOpen && cssFed.menuOpen)}>
       <span className={cssFed.fedRowIcon}><StackedFoldersIcon /></span>
       <span className={cssFed.fedRowTitle} title={federationTooltipLines(federation, t)}>{federation.title}</span>
+      {hasMissingMembers(federation) && (
+        <span className={cssFed.fedMissingTag} title={t('federation.missingHint')}>{t('federation.memberMissing')}</span>
+      )}
       <span className={cssFed.fedBadge}>×{federation.memberPaths.length}</span>
       <span className={cssFed.fedRowActions}>
         <Menu

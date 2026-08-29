@@ -26,6 +26,18 @@
   background: var(--dsw-alias-bg-layer-2);
 }
 
+/* Missing-member marker: the list's presence probe flagged a member path.
+ * Shared by the pick-menu label, the browser management row, and the panel. */
+.fedMissingTag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 9999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
 /* ---- create-federation panel ---- */
 
 /* Browser management block: durable federation rows above the session tree.
@@ -172,6 +184,24 @@
   font-size: 11px;
   line-height: 15px;
   color: var(--dsw-alias-label-tertiary);
+}
+
+.memberMissing {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.memberToggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.memberToggle:disabled:hover {
+  background: transparent;
 }
 
 .panelHint {

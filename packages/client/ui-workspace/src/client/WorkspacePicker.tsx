@@ -49,11 +49,26 @@ export function StackedFoldersIcon(): ReactNode {
   )
 }
 
-/** Tooltip lines: every member path basename, the primary root first and marked. */
+/**
+ * Tooltip lines: every member path basename, the primary root first and
+ * marked; members the list's presence probe flagged as missing carry the
+ * missing marker so the stale composition is visible before a claim fails.
+ */
 export function federationTooltipLines(federation: FederationView, t: WorkspacePickFlowProps['t']): string {
+  const missing = new Set(federation.missingMembers ?? [])
   return federation.memberPaths
-    .map((path, index) => index === 0 ? `${t('federation.panel.primary')} ${basenameOf(path)}` : basenameOf(path))
+    .map((path, index) => {
+      const label = index === 0
+        ? `${t('federation.panel.primary')} ${basenameOf(path)}`
+        : basenameOf(path)
+      return missing.has(path) ? `${label}（${t('federation.memberMissing')}）` : label
+    })
     .join('\n')
+}
+
+/** Whether the list's presence probe flagged any member of this federation. */
+export function hasMissingMembers(federation: FederationView): boolean {
+  return (federation.missingMembers?.length ?? 0) > 0
 }
 
 /** One federation menu row: stacked-folders icon, tooltip-bearing label node, count capsule. */
@@ -63,6 +78,9 @@ function federationEntry(federation: FederationView, t: WorkspacePickFlowProps['
     label: (
       <span className={cssFed.fedLabel} title={federationTooltipLines(federation, t)}>
         <span className={cssFed.fedTitle}>{federation.title}</span>
+        {hasMissingMembers(federation) && (
+          <span className={cssFed.fedMissingTag}>{t('federation.memberMissing')}</span>
+        )}
         <span className={cssFed.fedBadge}>×{federation.memberPaths.length}</span>
       </span>
     ),

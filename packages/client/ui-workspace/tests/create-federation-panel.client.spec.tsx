@@ -152,6 +152,21 @@ describe('CreateFederationPanel', () => {
     expect(input.value).toBe('')
   })
 
+  it('locks a presence-probe-missing workspace out of the member set with the reason shown', () => {
+    mount({
+      workspaces: [{ ...workspace('gone', 'Gone'), missing: true }, workspace('beta', 'Beta')],
+    })
+    // The row says why it is locked and refuses selection; the healthy row
+    // still toggles.
+    expect(screen.getByText('目录已失效：路径不存在或不可访问')).toBeTruthy()
+    const gone = screen.getByRole('checkbox', { name: /Gone/ }) as HTMLButtonElement
+    expect(gone.disabled).toBe(true)
+    fireEvent.click(gone)
+    expect(gone.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Beta/ }))
+    expect(screen.getByRole('checkbox', { name: /Beta/ }).getAttribute('aria-checked')).toBe('true')
+  })
+
   it('submits without a title key when the user clears the draft entirely', async () => {
     const b = mount()
     const input = screen.getByLabelText('联合工作区名称')

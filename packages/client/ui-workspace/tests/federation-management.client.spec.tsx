@@ -70,6 +70,13 @@ async function seedFederations(runtime: SlotTestRuntime): Promise<void> {
         memberPaths: ['/w/docs', '/w/site'],
         createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z',
       },
+      // The list's presence probe flagged one member: the row shows the marker.
+      {
+        federationId: 'fed-c' as FederationId, title: 'stale pair',
+        memberPaths: ['/w/stale', '/w/kept'],
+        createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z',
+        missingMembers: ['/w/stale'],
+      },
     ] as never
   })
 }
@@ -160,6 +167,24 @@ describe('federation management block', () => {
     const alert = await view.findByRole('alert')
     expect(alert.textContent).toContain('federation-name-conflict')
     expect(view.getByLabelText('联合工作区名称')).toBeTruthy()
+    await runtime.dispose()
+  })
+
+  it('marks a row whose list probe flagged missing members, tooltip carrying the per-member marker', async () => {
+    const runtime = await createRuntime()
+    await seedFederations(runtime)
+    await runtime.root.declare(
+      { 'sidebar.workspaces': { kind: 'single', scope: 'root' } } as never,
+      SidebarFrame as never,
+    )
+    await runtime.mount({ inject: [...inject], apply })
+    const view = runtime.renderRoot()
+
+    const staleTitle = await view.findByText('stale pair')
+    expect(staleTitle.getAttribute('title')).toBe('主 stale（已失效）\nkept')
+    expect(within(staleTitle.closest('div')!).getByText('已失效')).toBeTruthy()
+    // Healthy rows carry no marker.
+    expect(view.getByText('alpha + beta').getAttribute('title')).toBe('主 alpha\nbeta')
     await runtime.dispose()
   })
 

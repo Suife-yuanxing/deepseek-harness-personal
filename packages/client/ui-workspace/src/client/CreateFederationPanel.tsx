@@ -134,6 +134,10 @@ export function CreateFederationPanel({
         {workspaces.map((workspace) => {
           const position = members.findIndex(member => member.id === workspace.workspaceId)
           const checked = position >= 0
+          // The list's presence probe flagged this directory as gone: the
+          // Host would reject the create (`federation-invalid-members`), so
+          // the row is unselectable and says why.
+          const missing = workspace.missing === true
           return (
             <div key={workspace.workspaceId} className={css.memberRow}>
               <button
@@ -141,6 +145,7 @@ export function CreateFederationPanel({
                 role="checkbox"
                 aria-checked={checked}
                 className={css.memberToggle}
+                disabled={missing}
                 onClick={() => { toggle(workspace.workspaceId) }}
               >
                 <span className={clsx(css.checkbox, checked && css.checked)}>
@@ -149,6 +154,7 @@ export function CreateFederationPanel({
                 <span className={css.memberText}>
                   <span className={css.memberTitle}>{workspace.title}</span>
                   <span className={css.memberPath}>{workspace.path}</span>
+                  {missing && <span className={css.memberMissing}>{t('federation.missingHint')}</span>}
                 </span>
               </button>
               {checked && (
