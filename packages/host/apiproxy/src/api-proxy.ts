@@ -1199,6 +1199,37 @@ function federationView(federation: Federation): FederationView {
   }
 }
 
+/**
+ * Directory presence probe for the list handlers: a row whose directory (or,
+ * for federations, one of whose members) no longer resolves is flagged so
+ * selection surfaces can warn before a session create fails. The registry's
+ * tolerant missing-dir stance keeps such rows; the flag is advisory.
+ */
+async function withWorkspacePresence(items: readonly WorkspaceView[]): Promise<WorkspaceView[]> {
+  return Promise.all(items.map(async (item) => {
+    try {
+      if ((await stat(item.path)).isDirectory()) return item
+    } catch {
+      // ENOENT and friends both mean "not usable right now".
+    }
+    return { ...item, missing: true }
+  }))
+}
+
+/** Federation flavor of the presence probe: the missing member paths, if any. */
+async function withFederationPresence(items: readonly FederationView[]): Promise<FederationView[]> {
+  return Promise.all(items.map(async (federation) => {
+    const missingMembers = (await Promise.all(federation.memberPaths.map(async (path) => {
+      try {
+        return (await stat(path)).isDirectory() ? undefined : path
+      } catch {
+        return path
+      }
+    }))).filter((path): path is string => path !== undefined)
+    return missingMembers.length === 0 ? federation : { ...federation, missingMembers }
+  }))
+}
+
 /** Wire projection of the durable record carried by `domain/changed`. */
 function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceView {
   const record: WorkspaceRecord = workspaceRecord.parse(value)
@@ -3010,13 +3041,17 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     },
 
     workspace: {
-      list(request) {
-        return Promise.resolve(ok(request, {
-          items: ctx.workspaceRegistry.list().map(workspaceView),
+      async list(request) {
+        const [items, federations] = await Promise.all([
+          withWorkspacePresence(ctx.workspaceRegistry.list().map(workspaceView)),
+          withFederationPresence(ctx.workspaceRegistry.listFederations().map(federationView)),
+        ])
+        return ok(request, {
+          items,
           archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds],
-          federations: ctx.workspaceRegistry.listFederations().map(federationView),
+          federations,
           federatedWorkspacesEnabled,
-        }))
+        })
       },
 
       async create(request) {
@@ -3159,10 +3194,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
       },
 
-      listFederations(request) {
-        return Promise.resolve(ok(request, {
-          items: ctx.workspaceRegistry.listFederations().map(federationView),
-        }))
+      async listFederations(request) {
+        return ok(request, {
+          items: await withFederationPresence(
+            ctx.workspaceRegistry.listFederations().map(federationView),
+          ),
+        })
       },
 
       async renameFederation(request) {

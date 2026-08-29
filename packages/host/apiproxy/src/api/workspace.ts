@@ -31,6 +31,13 @@ export interface FederationView {
   memberPaths: string[]
   createdAt: string
   updatedAt: string
+  /**
+   * Member paths that no longer resolve to an existing directory, from the
+   * list handlers' presence probe. Absent when every member resolves (and
+   * from mutations that just validated their members) — `undefined` means
+   * "unknown", not "present".
+   */
+  missingMembers?: string[]
 }
 
 /** One workspace row: the record projection every workspace.* value carries. */
@@ -49,6 +56,13 @@ export interface WorkspaceView {
   createdAt: string
   /** ISO-8601 last-mutation instant. */
   updatedAt: string
+  /**
+   * True when the directory no longer resolves (the registry's tolerant
+   * missing-dir stance keeps the row). Absent from mutations that just
+   * validated the path and from projections that did not probe —
+   * `undefined` means "unknown", not "present".
+   */
+  missing?: boolean
 }
 
 /** Workspace-domain unary methods (the map keys workspace.* of RpcMethodMap). */

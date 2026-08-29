@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -599,6 +599,29 @@ describe('workspace federation handlers', () => {
     expect(removed.result).toEqual({ ok: true, value: { deleted: true } })
     const afterDelete = await api.workspace.deleteFederation(request({ federationId: created.federation.federationId }))
     expect(afterDelete.result).toEqual({ ok: true, value: { deleted: true } })
+  })
+
+  it('flags vanished member directories on list instead of dropping the tolerant rows', async () => {
+    const { api, root } = await harness()
+    const a = stageDir(root, 'probe-a')
+    const b = stageDir(root, 'probe-b')
+
+    // A workspace whose directory vanishes keeps its row (missing-dir
+    // tolerance) and the list handler flags it.
+    expectOk(await api.workspace.create(request({ path: a })))
+    rmSync(a, { recursive: true, force: true })
+    const listed = expectOk(await api.workspace.list(request({})))
+    expect(listed.items).toHaveLength(1)
+    expect(listed.items[0]?.missing).toBe(true)
+
+    // A federation keeps its record and names the missing members only.
+    const c = stageDir(root, 'probe-c')
+    expectOk(await api.workspace.createFederation(request({ memberPaths: [b, c] })))
+    rmSync(b, { recursive: true, force: true })
+    const federations = expectOk(await api.workspace.listFederations(request({}))).items
+    expect(federations).toHaveLength(1)
+    expect(federations[0]?.missingMembers).toEqual([b])
+    expect(expectOk(await api.workspace.list(request({}))).federations[0]?.missingMembers).toEqual([b])
   })
 
   it('maps membership validation and name conflicts to their wire codes', async () => {

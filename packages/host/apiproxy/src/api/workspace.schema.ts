@@ -21,6 +21,9 @@ export const federationViewSchema = z.object({
   memberPaths: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // List-handler presence probe only; mutations that just validated their
+  // members omit it.
+  missingMembers: z.array(z.string()).optional(),
 }) satisfies z.ZodType<Wire<FederationView>>
 
 /** WorkspaceView row of every workspace.* response. */
@@ -31,6 +34,8 @@ export const workspaceViewSchema = z.object({
   sessionIds: z.array(sessionIdSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // List-handler presence probe only; mutations that just validated the path omit it.
+  missing: z.boolean().optional(),
 }) satisfies z.ZodType<Wire<WorkspaceView>>
 
 /** workspace.list request payload (empty object literal). */
