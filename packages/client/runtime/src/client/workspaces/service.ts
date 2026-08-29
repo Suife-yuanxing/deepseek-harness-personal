@@ -244,6 +244,30 @@ export class WorkspaceRuntime implements IWorkspaces {
   }
 
   /**
+   * Rename a federation, then converge the list through the manager's
+   * refresh (one install path — the baseline — for the read face).
+   * @param federationId - target federation.
+   * @param title - new display title (trimmed non-empty by the Host).
+   * @returns the renamed federation view.
+   */
+  async renameFederation(federationId: FederationId, title: string): Promise<FederationView> {
+    const result = await this.manager.renameFederation(federationId, title)
+    if (!result.ok) throw new Error(`federation rename failed: ${result.error.code}: ${result.error.message}`)
+    return result.value.federation
+  }
+
+  /**
+   * Delete one federation registration. Member directories, workspaces, and
+   * session logs remain Host-owned outside this operation; existing
+   * federated sessions keep resolving (the gray switch gates creation only).
+   * @param federationId - target federation.
+   */
+  async deleteFederation(federationId: FederationId): Promise<void> {
+    const result = await this.manager.deleteFederation(federationId)
+    if (!result.ok) throw new Error(`federation delete failed: ${result.error.code}: ${result.error.message}`)
+  }
+
+  /**
    * Open the Host's native directory picker (the `native` capability).
    * @returns the selected path, or null when the user cancelled.
    */

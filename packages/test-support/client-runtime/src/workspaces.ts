@@ -122,6 +122,30 @@ export class TestWorkspaces implements IWorkspaces {
   }
 
   /**
+   * Rename a federation (recorded). The default echoes a minimal view; stub
+   * for conflict flows.
+   * @param federationId - target federation.
+   * @param title - new title.
+   * @returns the renamed view.
+   */
+  async renameFederation(federationId: FederationId, title: string): Promise<FederationView> {
+    this.calls.push({ method: 'renameFederation', args: [federationId, title] })
+    const stub = this.stubs.get('renameFederation')
+    if (stub !== undefined) return await (stub(federationId, title) as Promise<FederationView>)
+    return { federationId, title, memberPaths: [] } as unknown as FederationView
+  }
+
+  /**
+   * Delete a federation registration (recorded; default no-op — the list
+   * state's federation row removal is the test's own `update` concern).
+   * @param federationId - target federation.
+   */
+  async deleteFederation(federationId: FederationId): Promise<void> {
+    this.calls.push({ method: 'deleteFederation', args: [federationId] })
+    await (this.stubs.get('deleteFederation')?.(federationId) as Promise<void> | undefined)
+  }
+
+  /**
    * Open a path with the host OS default application (recorded; default no-op).
    * @param path - host-resolvable path.
    */

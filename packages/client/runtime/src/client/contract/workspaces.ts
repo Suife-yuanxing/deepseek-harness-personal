@@ -49,6 +49,19 @@ export interface IWorkspaces {
    */
   startFederatedSession(federationId: FederationId): Promise<SessionId>
   /**
+   * Rename a federation, then converge the list state.
+   * @param federationId - target federation.
+   * @param title - the new display title.
+   * @returns the renamed federation view.
+   */
+  renameFederation(federationId: FederationId, title: string): Promise<FederationView>
+  /**
+   * Delete a federation registration (member directories, workspaces, and
+   * session logs remain; existing federated sessions keep resolving).
+   * @param federationId - target federation.
+   */
+  deleteFederation(federationId: FederationId): Promise<void>
+  /**
    * Open the Host's native directory picker.
    * @returns the selected path, or null when the user cancelled.
    */

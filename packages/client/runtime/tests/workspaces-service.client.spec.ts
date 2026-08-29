@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { FederationId, SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import { SessionRuntime } from '../src/client/sessions/service.ts'
 import { WorkspaceManager } from '../src/client/workspaces/manager.ts'
 import { DirectoryBrowseError, WorkspaceCreateError, WorkspaceRuntime } from '../src/client/workspaces/service.ts'
@@ -374,6 +374,49 @@ describe('WorkspaceRuntime', () => {
       code: 'workspace-not-found', message: 'gone', details: { workspaceId: 'ghost' },
     }))
     await expect(workspaces.delete(wid('ghost'))).rejects.toThrow(/workspace-not-found: gone/)
+  })
+
+  it('renames and deletes federations, converging the list through the follow-up refresh', async () => {
+    const ctx = new Context()
+    const api = new FakeApiClient()
+    const workspaces = new WorkspaceRuntime(ctx, api, new SessionRuntime(ctx, api, fakeRemote()))
+    const federation = {
+      federationId: 'fed-a' as FederationId, title: 'alpha + beta', memberPaths: ['/w/alpha', '/w/beta'],
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    // The baseline source stays mutable: the unary echo installs nothing (one
+    // install path — the refresh — for the read face), so convergence is only
+    // observable when the Host list itself reflects the mutation.
+    let federations: unknown[] = [federation]
+    api.onWorkspaceList = () => Promise.resolve(ok({
+      items: [workspace('alpha')] as never[], federations: federations as never[],
+    }))
+    await workspaces.refresh()
+    expect(workspaces.list.getSnapshot().federations.map(item => item.title)).toEqual(['alpha + beta'])
+
+    api.onWorkspaceRenameFederation = () => Promise.resolve(ok({
+      federation: { ...federation, title: 'front + back' },
+    }))
+    federations = [{ ...federation, title: 'front + back' }]
+    await expect(workspaces.renameFederation('fed-a' as FederationId, 'front + back')).resolves.toMatchObject({ title: 'front + back' })
+    expect(api.callsOf('workspace.renameFederation')).toEqual([{ federationId: 'fed-a', title: 'front + back' }])
+    await vi.waitFor(() => {
+      expect(workspaces.list.getSnapshot().federations.map(item => item.title)).toEqual(['front + back'])
+    })
+
+    api.onWorkspaceDeleteFederation = () => Promise.resolve(ok({ deleted: true as const }))
+    federations = []
+    await expect(workspaces.deleteFederation('fed-a' as FederationId)).resolves.toBeUndefined()
+    expect(api.callsOf('workspace.deleteFederation')).toEqual([{ federationId: 'fed-a' }])
+    await vi.waitFor(() => {
+      expect(workspaces.list.getSnapshot().federations).toEqual([])
+    })
+
+    api.onWorkspaceRenameFederation = () => Promise.resolve(err({
+      code: 'federation-name-conflict', message: 'held', details: { title: 'docs + site' },
+    }))
+    await expect(workspaces.renameFederation('fed-a' as FederationId, 'docs + site'))
+      .rejects.toThrow(/federation-name-conflict: held/)
   })
 
   it('moves a Workspace through the durable order RPC and surfaces Host rejection', async () => {
