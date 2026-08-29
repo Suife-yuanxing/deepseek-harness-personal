@@ -6,7 +6,7 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import type { WorkspacePickerProps } from '../src/client/contract/slots.ts'
+import type { DirectoryFlowOwnerProps, WorkspacePickerProps } from '../src/client/contract/slots.ts'
 import { CreateFederationPanel } from '../src/client/CreateFederationPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 
@@ -30,25 +30,47 @@ function created(): FederationView {
 
 interface MountOptions {
   workspaces?: readonly WorkspaceView[]
+  flowAvailable?: boolean
   createFederation?: (input: { title?: string; memberPaths: string[] }) => Promise<FederationView>
 }
 
-function mount({ workspaces = [workspace('alpha', 'Alpha'), workspace('beta', 'Beta')], createFederation }: MountOptions = {}) {
+function mount({ workspaces = [workspace('alpha', 'Alpha'), workspace('beta', 'Beta')], flowAvailable = false, createFederation }: MountOptions = {}) {
   const carrier = createFederation ?? vi.fn(async () => created())
   const onClose = vi.fn()
+  // Flow-seam stub: no real occupant renders, but the owner conversation is
+  // captured on every render so tests drive the pick lifecycle directly
+  // (onPicked / onCancel / onError) exactly as an occupant would report it.
+  const ownerHolder: { current: DirectoryFlowOwnerProps | null } = { current: null }
+  const renderDirectoryFlow = vi.fn((flowOwner: DirectoryFlowOwnerProps) => {
+    ownerHolder.current = flowOwner
+    return null
+  })
   const view = render(
     <CreateFederationPanel
       createFederation={carrier}
       workspaces={workspaces}
+      flowAvailable={flowAvailable}
+      renderDirectoryFlow={renderDirectoryFlow}
       t={t}
       onClose={onClose}
     />,
   )
   return {
     carrier, onClose,
+    flowOwner(): DirectoryFlowOwnerProps {
+      if (ownerHolder.current === null) throw new Error('directory flow was never rendered')
+      return ownerHolder.current
+    },
     rerender(nextWorkspaces: readonly WorkspaceView[]): void {
       view.rerender(
-        <CreateFederationPanel createFederation={carrier} workspaces={nextWorkspaces} t={t} onClose={onClose} />,
+        <CreateFederationPanel
+          createFederation={carrier}
+          workspaces={nextWorkspaces}
+          flowAvailable={flowAvailable}
+          renderDirectoryFlow={renderDirectoryFlow}
+          t={t}
+          onClose={onClose}
+        />,
       )
     },
   }
@@ -117,9 +139,15 @@ describe('CreateFederationPanel', () => {
     expect(b.onClose).not.toHaveBeenCalled()
   })
 
-  it('renders the empty state when no workspace exists to become a member', () => {
+  it('renders the empty state when no member source exists at all', () => {
     mount({ workspaces: [] })
     expect(screen.getByText('暂无会话')).toBeTruthy()
+  })
+
+  it('with a flow occupant, an empty registry is no dead end for free folders', () => {
+    mount({ workspaces: [], flowAvailable: true })
+    expect(screen.queryByText('暂无会话')).toBeNull()
+    expect(screen.getByText('添加文件夹…')).toBeTruthy()
   })
 
   it('toggles a checked member back off and drops ids whose workspace vanished mid-panel', () => {
@@ -193,5 +221,97 @@ describe('CreateFederationPanel', () => {
     // The dialog stays up; closing happens only through the footer or Escape.
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(b.onClose).not.toHaveBeenCalled()
+  })
+
+  describe('free folder members', () => {
+    it('hides the add-folder row without a flow occupant and opens the flow with one', () => {
+      mount()
+      expect(screen.queryByText('添加文件夹…')).toBeNull()
+      // With an occupant the row exists and raising it hands the owner an
+      // open flow; cancelling withdraws the request. Outcome callbacks fire
+      // outside React's event system, so each one rides act() like the
+      // occupant's callers would in a composed host.
+      const b = mount({ flowAvailable: true })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      expect(b.flowOwner().open).toBe(true)
+      act(() => { b.flowOwner().onCancel() })
+      expect(b.flowOwner().open).toBe(false)
+    })
+
+    it('appends a picked folder as a checked member that cannot promote', () => {
+      const b = mount({ flowAvailable: true })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onPicked('D:\\free\\extra') })
+      const folderRow = screen.getByRole('checkbox', { name: /extra/ })
+      expect(folderRow.getAttribute('aria-checked')).toBe('true')
+      // The default title follows the folder basename (untouched field).
+      const input = screen.getByLabelText('联合工作区名称') as HTMLInputElement
+      expect(input.value).toBe('extra')
+      // The folder's promote button is disabled with its reason on the tooltip.
+      const row = folderRow.closest('div')!
+      const promote = row.querySelector('button:not([role])') as HTMLButtonElement
+      expect(promote.disabled).toBe(true)
+      expect(promote.title).toBe('自由选择的文件夹不能设为主目录：联合会话附着在主目录对应的已注册工作区上')
+    })
+
+    it('refuses an exact duplicate path inline instead of adding a second row', () => {
+      const b = mount({ flowAvailable: true })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onPicked('D:\\free\\extra') })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onPicked('D:\\free\\extra') })
+      expect(screen.getByRole('alert').textContent).toBe('该文件夹已在成员列表中')
+      // One folder row only; the flow withdrew after each pick.
+      expect(b.flowOwner().open).toBe(false)
+      expect(screen.getAllByRole('checkbox', { name: /extra/ }).length).toBe(1)
+    })
+
+    it('lets a workspace promote ahead of a folder and submits the mixed order', async () => {
+      const b = mount({ flowAvailable: true })
+      // Folder lands first (state index 0), then Alpha is checked after it.
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onPicked('D:\\free\\extra') })
+      fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }))
+      // The folder cannot take the primary seat; Alpha can move ahead of it.
+      fireEvent.click(screen.getByRole('checkbox', { name: /Alpha/ }).closest('div')!.querySelector('button:not([role])')!)
+      const input = screen.getByLabelText('联合工作区名称') as HTMLInputElement
+      expect(input.value).toBe('alpha + extra')
+      fireEvent.click(screen.getByRole('button', { name: '创建' }))
+      await waitFor(() => {
+        expect(b.carrier).toHaveBeenCalledWith({ title: 'alpha + extra', memberPaths: ['/projects/alpha', 'D:\\free\\extra'] })
+      })
+    })
+
+    it('removes a folder member through its toggle-off gesture', () => {
+      const b = mount({ flowAvailable: true })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onPicked('D:\\free\\extra') })
+      fireEvent.click(screen.getByRole('checkbox', { name: /extra/ }))
+      expect(screen.queryByRole('checkbox', { name: /extra/ })).toBeNull()
+      const input = screen.getByLabelText('联合工作区名称') as HTMLInputElement
+      expect(input.value).toBe('')
+    })
+
+    it('builds a folders-only federation when no workspace is checked', async () => {
+      const b = mount({ flowAvailable: true, workspaces: [] })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onPicked('D:\\free\\one') })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onPicked('D:\\free\\two') })
+      fireEvent.click(screen.getByRole('button', { name: '创建' }))
+      await waitFor(() => {
+        expect(b.carrier).toHaveBeenCalledWith({ title: 'one + two', memberPaths: ['D:\\free\\one', 'D:\\free\\two'] })
+      })
+      expect(b.onClose).toHaveBeenCalled()
+    })
+
+    it('surfaces a flow failure inline and leaves the panel intact', () => {
+      const b = mount({ flowAvailable: true })
+      fireEvent.click(screen.getByText('添加文件夹…'))
+      act(() => { b.flowOwner().onError('chooser unavailable') })
+      expect(screen.getByRole('alert').textContent).toBe('chooser unavailable')
+      expect(b.flowOwner().open).toBe(false)
+      expect(b.onClose).not.toHaveBeenCalled()
+    })
   })
 })

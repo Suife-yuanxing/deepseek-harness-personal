@@ -234,7 +234,7 @@ describe('federation management block', () => {
     await runtime.workspaces.update((draft) => {
       draft.items = draft.items.map(workspace => workspace.workspaceId === 'w1'
         ? { ...workspace, sessionIds: ['fed-s'] as never }
-        : workspace) as never
+        : workspace)
     })
     await runtime.root.declare(
       { 'sidebar.workspaces': { kind: 'single', scope: 'root' } } as never,
