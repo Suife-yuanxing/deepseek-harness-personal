@@ -575,7 +575,7 @@ describe('Host Workspace increments', () => {
 
 describe('workspace federation handlers', () => {
   it('creates over validated members, lists in order, renames, and deletes idempotently', async () => {
-    const { api, root } = await harness()
+    const { api, root } = await harness(undefined, undefined, { federatedWorkspacesEnabled: true })
     const a = stageDir(root, 'fed-a')
     const b = stageDir(root, 'fed-b')
 
@@ -602,7 +602,7 @@ describe('workspace federation handlers', () => {
   })
 
   it('flags vanished member directories on list instead of dropping the tolerant rows', async () => {
-    const { api, root } = await harness()
+    const { api, root } = await harness(undefined, undefined, { federatedWorkspacesEnabled: true })
     const a = stageDir(root, 'probe-a')
     const b = stageDir(root, 'probe-b')
 
@@ -624,8 +624,31 @@ describe('workspace federation handlers', () => {
     expect(expectOk(await api.workspace.list(request({}))).federations[0]?.missingMembers).toEqual([b])
   })
 
-  it('maps membership validation and name conflicts to their wire codes', async () => {
+  it('refuses createFederation behind the gray switch while the durable rows still resolve', async () => {
+    // Default harness: the switch is off (the deployment default).
     const { api, root } = await harness()
+    const a = stageDir(root, 'off-a')
+    const b = stageDir(root, 'off-b')
+
+    const refused = await api.workspace.createFederation(request({ memberPaths: [a, b] }))
+    expect(refused.result).toMatchObject({ ok: false, error: { code: 'federation-disabled' } })
+    // The refusal left no record behind.
+    expect(expectOk(await api.workspace.listFederations(request({}))).items).toHaveLength(0)
+
+    // Resolution is never gated: rename/delete of a durable row (seeded by
+    // flipping the switch on a fresh harness over the same assertions) would
+    // work — here the paired truth is that the same members DO create once
+    // the switch turns on.
+    const enabled = await harness(realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-fed-on2-'))), undefined, {
+      federatedWorkspacesEnabled: true,
+    })
+    const a2 = stageDir(enabled.root, 'off-a')
+    const b2 = stageDir(enabled.root, 'off-b')
+    expectOk(await enabled.api.workspace.createFederation(request({ memberPaths: [a2, b2] })))
+  })
+
+  it('maps membership validation and name conflicts to their wire codes', async () => {
+    const { api, root } = await harness(undefined, undefined, { federatedWorkspacesEnabled: true })
     const a = stageDir(root, 'conf-a')
     const b = stageDir(root, 'conf-b')
 
@@ -666,11 +689,14 @@ describe('workspace federation handlers', () => {
     const a = stageDir(root, 'claim-a')
     const b = stageDir(root, 'claim-b')
     expectOk(await off.api.workspace.create(request({ path: a })))
-    const fed = expectOk(await off.api.workspace.createFederation(request({ memberPaths: [a, b] })))
+    // The identity became durable while the switch was on (another deployment
+    // or an earlier boot); the wire gate sits above the registry, so the seed
+    // goes through the registry directly.
+    const seeded = await off.ctx.workspaceRegistry.createFederation({ memberPaths: [a, b] })
 
     // Switch OFF: a claim is refused before any session exists.
     const refused = await off.api.sessions.create(request({
-      federationId: fed.federation.federationId as never,
+      federationId: seeded.id as never,
       sessionId: SessionId('fed-refused'),
     }))
     expect(refused.result).toMatchObject({ ok: false, error: { code: 'federation-disabled' } })

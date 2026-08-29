@@ -3168,6 +3168,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async createFederation(request) {
         const { payload } = request
+        // The gray switch gates CREATION ONLY, and this is its other creation
+        // door beside the session.create claim: with the switch off the wire
+        // refuses new federations (the UI hides the entry too) while the
+        // already-durable rows keep resolving (list/rename/delete/claims of
+        // existing identities stay gated only by session.create's own guard).
+        if (!federatedWorkspacesEnabled) {
+          return err(request, {
+            code: 'federation-disabled',
+            message: 'federated workspaces are disabled in this deployment',
+            details: {},
+          })
+        }
         try {
           // exactOptionalPropertyTypes: an absent title is omitted, never undefined.
           const federation = await ctx.workspaceRegistry.createFederation({
