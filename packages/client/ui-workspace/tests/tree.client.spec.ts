@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type {
-  SessionId, SessionListState, SessionSummary, WorkspaceId, WorkspaceView,
+  FederationView, SessionId, SessionListState, SessionSummary, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, workspaceLabel, relativeTime,
-  UNGROUPED_KEY, UNGROUPED_LABEL,
+  deriveFlat, deriveGroups, deriveSearchResults, sessionFederationId, sessionGroupKey,
+  workspaceLabel, relativeTime, FEDERATION_KEY_PREFIX, UNGROUPED_KEY, UNGROUPED_LABEL,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
 
@@ -24,6 +24,11 @@ const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView 
   workspaceId: wid(id), path: `/projects/${id}`, title,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
+const federation = (id: string, memberPaths: string[], title = id): FederationView => ({
+  federationId: id as FederationView['federationId'], title, memberPaths,
+  createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+})
+const noFeds: readonly FederationView[] = []
 const view = (expandedGroups: readonly string[] = [], ungroupedOrder?: readonly string[]) => ({
   expandedGroups,
   ...(ungroupedOrder === undefined ? {} : { ungroupedOrder }),
@@ -35,7 +40,7 @@ describe('deriveGroups', () => {
   it('keeps Host Workspace and sessionIds order without Client recency sorting', () => {
     const sessions = list(summary('newer', 20), summary('older', 10))
     const workspaces = [workspace('first', ['older', 'newer']), workspace('empty', [])]
-    const groups = deriveGroups(sessions, workspaces, noArchive, view(['first']))
+    const groups = deriveGroups(sessions, workspaces, noFeds, noArchive, view(['first']))
     expect(groups.map(group => group.key)).toEqual(['first', 'empty'])
     expect(groups[0]!.sessions.map(session => session.id)).toEqual([sid('older'), sid('newer')])
   })
@@ -43,14 +48,14 @@ describe('deriveGroups', () => {
   it('projects pending-interaction state into grouped and flat rows', () => {
     const awaiting = { ...summary('awaiting', 10), pendingInteraction: 'plan-review' as const, running: true }
     const sessions = list(awaiting)
-    const grouped = deriveGroups(sessions, [workspace('project', ['awaiting'])], noArchive, view(['project']))
+    const grouped = deriveGroups(sessions, [workspace('project', ['awaiting'])], [], noArchive, view(['project']))
     expect(grouped[0]!.sessions[0]).toMatchObject({ pendingInteraction: 'plan-review', running: true })
     expect(deriveFlat(sessions, noArchive)[0]).toMatchObject({ pendingInteraction: 'plan-review', running: true })
   })
 
   it('puts only real unaccounted Sessions in the trailing Ungrouped group', () => {
     const sessions = list(summary('owned', 1, '/projects/first'), summary('loose', 9, '/other'))
-    const groups = deriveGroups(sessions, [workspace('first', ['owned'])], noArchive, view([UNGROUPED_KEY]))
+    const groups = deriveGroups(sessions, [workspace('first', ['owned'])], [], noArchive, view([UNGROUPED_KEY]))
     expect(groups.map(group => group.key)).toEqual(['first', UNGROUPED_KEY])
     expect(groups[1]!.sessions.map(session => session.id)).toEqual([sid('loose')])
   })
@@ -59,6 +64,7 @@ describe('deriveGroups', () => {
     const sessions = list(summary('one', 3), summary('two', 2), summary('new', 4))
     const groups = deriveGroups(
       sessions,
+      [],
       [],
       noArchive,
       view([UNGROUPED_KEY], ['two', 'stale', 'two']),
@@ -77,7 +83,7 @@ describe('deriveGroups', () => {
       current: currentBlank.id,
     }
     const groups = deriveGroups(
-      sessions, [workspace('first', ['shown', 'current-blank', 'stale-blank'])], noArchive, view(['first']),
+      sessions, [workspace('first', ['shown', 'current-blank', 'stale-blank'])], [], noArchive, view(['first']),
     )
     expect(groups[0]!.sessions.map(session => session.id)).toEqual([real.id, currentBlank.id])
     const blankNode = groups[0]!.sessions.find(session => session.id === currentBlank.id)!
@@ -88,7 +94,7 @@ describe('deriveGroups', () => {
     expect(groups[0]!.sessions.find(session => session.id === real.id)!.blank).toBe(false)
     expect(groups[0]!.sessionCount).toBe(2)
     // A non-current blank stray never surfaces an Ungrouped bucket either.
-    const strayGroups = deriveGroups(list({ ...summary('stray', 2), blank: true }), [workspace('first', [])], noArchive, view())
+    const strayGroups = deriveGroups(list({ ...summary('stray', 2), blank: true }), [workspace('first', [])], [], noArchive, view())
     expect(strayGroups.map(group => group.key)).toEqual(['first'])
   })
 
@@ -97,7 +103,7 @@ describe('deriveGroups', () => {
     const plain = summary('plain', 2)
     const sessions = list(done, plain)
     const groups = deriveGroups(
-      sessions, [workspace('first', ['done', 'plain'])], noArchive, view(['first']),
+      sessions, [workspace('first', ['done', 'plain'])], [], noArchive, view(['first']),
     )
     const doneNode = groups[0]!.sessions.find(session => session.id === done.id)!
     const plainNode = groups[0]!.sessions.find(session => session.id === plain.id)!
@@ -124,6 +130,7 @@ describe('deriveGroups', () => {
     const groups = deriveGroups(
       sessions,
       [workspace('first', ['parent', 'fork', 'subagent', 'grandchild', 'fork-child'])],
+      noFeds,
       noArchive,
       view(['first']),
     )
@@ -154,6 +161,7 @@ describe('deriveGroups', () => {
     const groups = deriveGroups(
       list(parent, oldChild, newChild, tieB, tieA, self, orphan, cycleA, cycleB),
       [],
+      [],
       noArchive,
       { expandedGroups: [UNGROUPED_KEY] },
     )
@@ -165,7 +173,7 @@ describe('deriveGroups', () => {
     ])
 
     // Equal timestamps use ids as a deterministic tiebreak in either input order.
-    expect(deriveGroups(list(summary('tie-a', 1), summary('tie-b', 1)), [], noArchive, view([UNGROUPED_KEY]))[0]!
+    expect(deriveGroups(list(summary('tie-a', 1), summary('tie-b', 1)), [], [], noArchive, view([UNGROUPED_KEY]))[0]!
       .sessions.map(node => node.id)).toEqual([sid('tie-a'), sid('tie-b')])
   })
 
@@ -175,7 +183,7 @@ describe('deriveGroups', () => {
       ids: [sid('present')],
       byId: { [sid('present')]: summary('present', 1) },
     }
-    const groups = deriveGroups(partial, [workspace('project', ['missing', 'present'])], noArchive, view(['project']))
+    const groups = deriveGroups(partial, [workspace('project', ['missing', 'present'])], [], noArchive, view(['project']))
     expect(groups[0]!.sessions.map(node => node.id)).toEqual([sid('present')])
   })
 
@@ -185,7 +193,7 @@ describe('deriveGroups', () => {
     const looseGone = summary('loose-gone', 3, '/other')
     const sessions = list(kept, gone, looseGone)
     const groups = deriveGroups(
-      sessions, [workspace('first', ['kept', 'gone'])], archived('gone', 'loose-gone'), view(['first', UNGROUPED_KEY]),
+      sessions, [workspace('first', ['kept', 'gone'])], noFeds, archived('gone', 'loose-gone'), view(['first', UNGROUPED_KEY]),
     )
     // The archived member drops from its group AND the archived stray never
     // surfaces an Ungrouped bucket; counts follow the visible rows.
@@ -198,10 +206,83 @@ describe('deriveGroups', () => {
     const owned = summary('owned', 1)
     const loose = summary('loose', 2)
     const ws = workspace('project', ['owned'])
-    const ownedGroups = deriveGroups({ ...list(owned, loose), current: owned.id }, [ws], noArchive, view())
+    const ownedGroups = deriveGroups({ ...list(owned, loose), current: owned.id }, [ws], noFeds, noArchive, view())
     expect(ownedGroups.find(group => group.key === 'project')!.containsCurrent).toBe(true)
-    const looseGroups = deriveGroups({ ...list(owned, loose), current: loose.id }, [ws], noArchive, view())
+    const looseGroups = deriveGroups({ ...list(owned, loose), current: loose.id }, [ws], noFeds, noArchive, view())
     expect(looseGroups.find(group => group.key === UNGROUPED_KEY)!.containsCurrent).toBe(true)
+  })
+})
+
+describe('federation grouping', () => {
+  const fed = federation('fed-1', ['/projects/alpha', '/projects/beta'], 'Alpha + Beta')
+  const claimed = (id: string, updatedAt: number): SessionSummary => ({
+    ...summary(id, updatedAt, '/projects/alpha'),
+    additionalRoots: ['/projects/beta'],
+  })
+
+  it('attributes a claimed session to its federation group and never double-lists it', () => {
+    const session = claimed('fed-session', 10)
+    const plain = summary('plain', 5)
+    const sessions = list(session, plain)
+    const groups = deriveGroups(
+      sessions,
+      // The host still counts the federated session under the primary
+      // workspace; the tree must render it exactly once.
+      [workspace('alpha', ['fed-session', 'plain'])],
+      [fed],
+      noArchive,
+      view([FEDERATION_KEY_PREFIX + 'fed-1', 'alpha']),
+    )
+    expect(groups.map(group => group.key)).toEqual([FEDERATION_KEY_PREFIX + 'fed-1', 'alpha'])
+    expect(groups[0]).toMatchObject({
+      workspaceId: undefined,
+      label: 'Alpha + Beta',
+      sessionCount: 1,
+      containsCurrent: false,
+    })
+    expect(groups[0]!.federation).toBe(fed)
+    expect(groups[0]!.sessions.map(node => node.id)).toEqual([session.id])
+    expect(groups[1]!.sessions.map(node => node.id)).toEqual([plain.id])
+  })
+
+  it('keeps same-cwd sessions without the exact member roots in the workspace group', () => {
+    const bare = summary('bare', 10, '/projects/alpha')
+    const extraRoot = { ...summary('extra', 9, '/projects/alpha'), additionalRoots: ['/somewhere/else'] }
+    const reordered = { ...claimed('reordered', 8), additionalRoots: [] }
+    const sessions = list(bare, extraRoot, reordered)
+    const groups = deriveGroups(sessions, [workspace('alpha', ['bare', 'extra', 'reordered'])], [fed], noArchive, view(['alpha']))
+    expect(groups.map(group => group.key)).toEqual([FEDERATION_KEY_PREFIX + 'fed-1', 'alpha'])
+    expect(groups[0]!.sessionCount).toBe(0)
+    expect(groups[1]!.sessions.map(node => node.id)).toEqual([bare.id, extraRoot.id, reordered.id])
+  })
+
+  it('hides sessions while folded but still counts them, and tints the current federation group', () => {
+    const session = claimed('fed-session', 10)
+    const sessions = { ...list(session), current: session.id }
+    const folded = deriveGroups(sessions, [workspace('alpha', ['fed-session'])], [fed], noArchive, view())
+    expect(folded[0]).toMatchObject({ expanded: false, sessionCount: 1, containsCurrent: true })
+    expect(folded[0]!.sessions).toEqual([])
+    expect(sessionGroupKey(session, [workspace('alpha', ['fed-session'])], [fed]))
+      .toBe(FEDERATION_KEY_PREFIX + 'fed-1')
+  })
+
+  it('emits an empty federation group so the header is never a dead end', () => {
+    const groups = deriveGroups(list(), [workspace('alpha', [])], [fed], noArchive, view())
+    expect(groups.map(group => group.key)).toEqual([FEDERATION_KEY_PREFIX + 'fed-1', 'alpha'])
+    expect(groups[0]!.sessionCount).toBe(0)
+  })
+
+  it('matches the federation only on the exact root-set rule', () => {
+    expect(sessionFederationId(claimed('x', 1), [fed])).toBe('fed-1')
+    expect(sessionFederationId(summary('x', 1, '/projects/alpha'), [fed])).toBeUndefined()
+    expect(sessionFederationId(
+      { ...summary('x', 1, '/projects/alpha'), additionalRoots: ['/projects/beta', '/projects/gamma'] },
+      [fed],
+    )).toBeUndefined()
+    expect(sessionFederationId(undefined, [fed])).toBeUndefined()
+    // First matching federation in registry order wins.
+    const twin = federation('fed-2', ['/projects/alpha', '/projects/beta'])
+    expect(sessionFederationId(claimed('x', 1), [fed, twin])).toBe('fed-1')
   })
 })
 

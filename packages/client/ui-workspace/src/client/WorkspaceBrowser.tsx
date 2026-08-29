@@ -12,21 +12,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconCloseFill14, IconEditOutline16, IconEllipsisOutline16,
+  Button, IconCloseFill14,
   IconPersonalizationOutline16, IconProjectAddOutline16, IconSearchOutline16,
-  IconTrashOutline16, Menu, Modal, Tooltip,
+  Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   FederationId, FederationView, SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
-import { deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
-import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
+import { deriveFlat, deriveGroups, deriveSearchResults, FEDERATION_KEY_PREFIX, sessionGroupKey, UNGROUPED_KEY } from './tree.ts'
+import { FederationGroupRowItem, ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
-import { StackedFoldersIcon, federationTooltipLines, hasMissingMembers, WorkspacePickFlow } from './WorkspacePicker.tsx'
+import { WorkspacePickFlow } from './WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
-import cssFed from './Federations.module.css'
 
 /**
  * Column slide length (--ds-transition-duration-slow): rail-search focus waits it out —
@@ -221,6 +220,8 @@ type SessionTreeProps = Pick<
   | 'insertWorkspaceBefore' | 'insertSessionBefore' | 't'
 > & {
   workspaces: readonly WorkspaceView[]
+  /** Durable federations in registry order (their groups lead the tree). */
+  federations: readonly FederationView[]
   /** Explicit persisted zero-or-five-session state by Workspace group. */
   groupExpansion: Readonly<Record<string, boolean>>
   /** Persist one Workspace group's zero-or-five-session state. */
@@ -239,6 +240,10 @@ type SessionTreeProps = Pick<
   onRenameRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
   /** Open the browser-owned delete-confirmation dialog for a real Workspace group. */
   onDeleteRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
+  /** Open the browser-owned rename dialog for a federation group header. */
+  onFedRenameRequest: (federation: FederationView) => void
+  /** Open the browser-owned delete-confirmation dialog for a federation group header. */
+  onFedDeleteRequest: (federation: FederationView) => void
   /** Open the browser-owned session rename dialog. */
   onSessionRename: (sessionId: SessionNode['id'], currentTitle: string) => void
   /** Archive a session (row menu action; the row disappears on the state echo). */
@@ -249,8 +254,9 @@ type SessionTreeProps = Pick<
 
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
 function SessionTree({
-  useSessions, startSession, open, forkSession, workspaces, archivedSessionIds,
+  useSessions, startSession, open, forkSession, workspaces, federations, archivedSessionIds,
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
+  onFedRenameRequest, onFedDeleteRequest,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
   sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
@@ -266,10 +272,11 @@ function SessionTree({
   const previousOrderBy = useRef(orderBy)
   const nativeDragActive = drag !== null || workspaceDrag !== null
   useNativeDragAcceptance(nativeDragActive)
-  const currentGroup = current === undefined
-    ? undefined
-    : (workspaces.find(w => w.sessionIds.includes(current))?.workspaceId as string | undefined)
-      ?? UNGROUPED_KEY
+  const currentGroup = sessionGroupKey(
+    current === undefined ? undefined : list.byId[current],
+    workspaces,
+    federations,
+  )
   useEffect(() => {
     if (current === undefined || currentGroup === undefined || Object.hasOwn(groupExpansion, currentGroup)) return
     setGroupExpanded(currentGroup, true)
@@ -321,13 +328,13 @@ function SessionTree({
     [sessionOrderByAccount, ungroupedSessionIds],
   )
   const groups = useMemo(
-    () => deriveGroups(list, orderedWorkspaces, archivedSessionIds, {
+    () => deriveGroups(list, orderedWorkspaces, federations, archivedSessionIds, {
       expandedGroups,
       ...(sessionOrderByAccount[UNGROUPED_KEY] === undefined
         ? {}
         : { ungroupedOrder: sessionOrderByAccount[UNGROUPED_KEY] }),
     }),
-    [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount],
+    [list, orderedWorkspaces, federations, archivedSessionIds, expandedGroups, sessionOrderByAccount],
   )
   const now = Date.now()
   const commitSessionDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {
@@ -425,6 +432,12 @@ function SessionTree({
               if (workspaceDrag === null) return
               commitWorkspaceDrag(workspaceDrag, { id: workspaceId, half })
             }
+          const toggleGroup = () => {
+            if (group.expanded) {
+              setExpandedSessionGroups(keys => keys.filter(key => key !== group.key))
+            }
+            setGroupExpanded(group.key, !group.expanded)
+          }
           return (
           // Group section: header row + expanded top-level session rows. The
           // inter-group breathing room is the section's own margin
@@ -450,64 +463,75 @@ function SessionTree({
                   dropWorkspace(workspaceGroupHalf(e))
                 }}
             >
-              <ProjectRowItem
-                group={group}
-                t={t}
-                onToggle={() => {
-                  if (group.expanded) {
-                    setExpandedSessionGroups(keys => keys.filter(key => key !== group.key))
-                  }
-                  setGroupExpanded(group.key, !group.expanded)
-                }}
-                onCreate={() => {
-                  if (group.workspaceId !== undefined) {
-                    setGroupExpanded(group.key, true)
-                    startSession(group.workspaceId)
-                  }
-                }}
-                drag={workspaceDragProps}
-                actions={group.workspaceId === undefined
-                  ? undefined
-                  : {
-                    rename: () => {
-                    /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
-                      if (group.workspaceId !== undefined) onRenameRequest(group.workspaceId, group.label)
-                    },
-                    delete: () => {
-                    /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
-                      if (group.workspaceId !== undefined) onDeleteRequest(group.workspaceId, group.label)
-                    },
+              {group.federation !== undefined ? (
+                <FederationGroupRowItem
+                  group={group}
+                  t={t}
+                  onToggle={toggleGroup}
+                  actions={{
+                    rename: () => onFedRenameRequest(group.federation as FederationView),
+                    delete: () => onFedDeleteRequest(group.federation as FederationView),
                   }}
-              />
+                />
+              ) : (
+                <ProjectRowItem
+                  group={group}
+                  t={t}
+                  onToggle={toggleGroup}
+                  onCreate={() => {
+                    if (group.workspaceId !== undefined) {
+                      setGroupExpanded(group.key, true)
+                      startSession(group.workspaceId)
+                    }
+                  }}
+                  drag={workspaceDragProps}
+                  actions={group.workspaceId === undefined
+                    ? undefined
+                    : {
+                      rename: () => {
+                      /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
+                        if (group.workspaceId !== undefined) onRenameRequest(group.workspaceId, group.label)
+                      },
+                      delete: () => {
+                      /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
+                        if (group.workspaceId !== undefined) onDeleteRequest(group.workspaceId, group.label)
+                      },
+                    }}
+                />
+              )}
               {(expandedSessionGroups.includes(group.key)
                 ? group.sessions
                 : group.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
               ).map((node) => {
               // Session drag never leaves its group. Ungrouped writes only the
-              // browser-local account; real Workspaces may also write Host order.
+              // browser-local account; real Workspaces may also write Host
+              // order. Federation groups order by recency: their rows carry no
+              // drag wiring and no per-federation order account exists.
                 const sameGroupDrag = drag !== null && drag.accountKey === group.key
-                const dragProps = {
-                  start: () => {
-                    sessionDropCommitted.current = false
-                    setDrag({ accountKey: group.key, sessionId: node.id, over: null })
-                  },
-                  active: sameGroupDrag,
-                  marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
-                  hover: (half: 'before' | 'after') => {
-                  /* v8 ignore next -- narrowing guard: Rows gates hover on `active`, which is false while the drag state is null. */
-                    setDrag(d => (d === null ? d : { ...d, over: { id: node.id, half } }))
-                  },
-                  drop: (half: 'before' | 'after') => {
-                  /* v8 ignore next -- narrowing guard: Rows gates drop on `active`, which is false while the drag state is null. */
-                    if (drag === null) return
-                    commitSessionDrag(drag, { id: node.id, half })
-                  },
-                  end: () => {
-                    if (drag?.over !== null && drag?.over !== undefined) commitSessionDrag(drag, drag.over)
-                    else setDrag(null)
-                    sessionDropCommitted.current = false
-                  },
-                }
+                const dragProps = group.federation !== undefined
+                  ? undefined
+                  : {
+                    start: () => {
+                      sessionDropCommitted.current = false
+                      setDrag({ accountKey: group.key, sessionId: node.id, over: null })
+                    },
+                    active: sameGroupDrag,
+                    marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
+                    hover: (half: 'before' | 'after') => {
+                      /* v8 ignore next -- narrowing guard: Rows gates hover on `active`, which is false while the drag state is null. */
+                      setDrag(d => (d === null ? d : { ...d, over: { id: node.id, half } }))
+                    },
+                    drop: (half: 'before' | 'after') => {
+                      /* v8 ignore next -- narrowing guard: Rows gates drop on `active`, which is false while the drag state is null. */
+                      if (drag === null) return
+                      commitSessionDrag(drag, { id: node.id, half })
+                    },
+                    end: () => {
+                      if (drag?.over !== null && drag?.over !== undefined) commitSessionDrag(drag, drag.over)
+                      else setDrag(null)
+                      sessionDropCommitted.current = false
+                    },
+                  }
                 return (
                   <SessionNodeItem
                     key={node.id}
@@ -523,6 +547,11 @@ function SessionTree({
                   />
                 )
               })}
+              {/* An expanded federation without sessions states itself: the
+                  header click must never read as a dead control. */}
+              {group.federation !== undefined && group.expanded && group.sessions.length === 0 && (
+                <div className={css.empty}>{t('empty.none')}</div>
+              )}
               {group.sessions.length > COLLAPSED_SESSION_LIMIT && (
                 <button
                   type="button"
@@ -736,65 +765,6 @@ function SearchResults({
 }
 
 /**
- * One federation management row in the browser's federation block: the
- * stacked-folders glyph, the title (member tooltip, primary root first),
- * the ×N badge, and a hover menu with rename/delete. Rows are management
- * only — federation sessions group under the primary workspace like any
- * other session, so a row click starts nothing.
- */
-function FederationRow({
-  federation, t, onRenameRequest, onDeleteRequest,
-}: {
-  federation: FederationView
-  t: WorkspaceBrowserProps['t']
-  onRenameRequest: (federation: FederationView) => void
-  onDeleteRequest: (federation: FederationView) => void
-}) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  return (
-    <div className={clsx(cssFed.fedRow, menuOpen && cssFed.menuOpen)}>
-      <span className={cssFed.fedRowIcon}><StackedFoldersIcon /></span>
-      <span className={cssFed.fedRowTitle} title={federationTooltipLines(federation, t)}>{federation.title}</span>
-      {hasMissingMembers(federation) && (
-        <span className={cssFed.fedMissingTag} title={t('federation.missingHint')}>{t('federation.memberMissing')}</span>
-      )}
-      <span className={cssFed.fedBadge}>×{federation.memberPaths.length}</span>
-      <span className={cssFed.fedRowActions}>
-        <Menu
-          open={menuOpen}
-          onClose={() => { setMenuOpen(false) }}
-          items={[
-            { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
-            { id: 'delete', label: t('federation.delete.title'), icon: <IconTrashOutline16 />, danger: true },
-          ]}
-          onSelect={(id) => {
-            setMenuOpen(false)
-            // Unknown ids leave before the dispatch: a future menu row must
-            // not inherit the destructive branch as an else fallback.
-            /* v8 ignore next -- the items array carries exactly these two rows today. */
-            if (id !== 'rename' && id !== 'delete') return
-            if (id === 'rename') onRenameRequest(federation)
-            else onDeleteRequest(federation)
-          }}
-          portal
-          closeOnPointerLeave
-          anchor={(
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-label={t('federation.actions.aria', { name: federation.title })}
-              onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
-            >
-              <IconEllipsisOutline16 />
-            </button>
-          )}
-        />
-      </span>
-    </div>
-  )
-}
-
-/**
  * Render the browsing region.
  * @param props - composed slot props (shell owner share + store + injected actions).
  * @returns the region element tree.
@@ -844,8 +814,11 @@ export function WorkspaceBrowser({
       UNGROUPED_KEY,
       FLAT_SESSION_ORDER_KEY,
       ...workspaces.map(workspace => workspace.workspaceId as string),
+      // Federation groups carry their own expansion state (and would carry a
+      // recency-order account if one ever exists) — pruning must not fold them.
+      ...federations.map(federation => `${FEDERATION_KEY_PREFIX}${federation.federationId}`),
     ])
-  }, [actions.retainAccountKeys, workspacePhase, workspaces])
+  }, [actions.retainAccountKeys, workspacePhase, workspaces, federations])
   // The query outlives the tree and the input (both wide-only) so collapsing
   // does not silently drop an in-progress filter.
   const [query, setQuery] = useState('')
@@ -1230,31 +1203,6 @@ export function WorkspaceBrowser({
       {/* Always-mounted seat keeps the region's flex slot while the list
           itself is wide-only. */}
       <div className={css.listArea}>
-        {/* Federation management block: durable compositions with no session
-            grouping of their own. Wide-only (the rail has no room and the
-            dialogs are wide-only features); hidden entirely while the list
-            holds none, so a federation-free install renders exactly as before. */}
-        {wide && federations.length > 0 && (
-          <div className={cssFed.fedBrowser} role="group" aria-label={t('federation.browser.title')}>
-            <div className={cssFed.fedBrowserTitle}>{t('federation.browser.title')}</div>
-            {federations.map(federation => (
-              <FederationRow
-                key={federation.federationId}
-                federation={federation}
-                t={t}
-                onRenameRequest={(target) => {
-                  setFedRenameTarget({ federationId: target.federationId, currentTitle: target.title })
-                  setFedRenameDraft(target.title)
-                  setFedRenameError(null)
-                }}
-                onDeleteRequest={(target) => {
-                  setFedDeleteTarget({ federationId: target.federationId, title: target.title })
-                  setFedDeleteError(null)
-                }}
-              />
-            ))}
-          </div>
-        )}
         {wide && (normalizedQuery !== ''
           ? (
             <SearchResults
@@ -1289,6 +1237,7 @@ export function WorkspaceBrowser({
                 onSessionArchive={onSessionArchive}
                 forkSession={forkSession}
                 workspaces={workspaces}
+                federations={federations}
                 groupExpansion={groupExpansion}
                 setGroupExpanded={actions.setGroupExpanded}
                 sessionOrderByAccount={sessionOrderByAccount}
@@ -1310,6 +1259,15 @@ export function WorkspaceBrowser({
                 onDeleteRequest={(workspaceId, title) => {
                   setDeleteTarget({ workspaceId, title })
                   setDeleteError(null)
+                }}
+                onFedRenameRequest={(federation) => {
+                  setFedRenameTarget({ federationId: federation.federationId, currentTitle: federation.title })
+                  setFedRenameDraft(federation.title)
+                  setFedRenameError(null)
+                }}
+                onFedDeleteRequest={(federation) => {
+                  setFedDeleteTarget({ federationId: federation.federationId, title: federation.title })
+                  setFedDeleteError(null)
                 }}
               />
             ))}

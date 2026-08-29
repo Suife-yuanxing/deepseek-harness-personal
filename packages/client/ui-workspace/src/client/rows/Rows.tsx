@@ -13,10 +13,13 @@ import {
   IconTrashOutline16, IconTriangleRightFill14, Menu, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { FederationView } from '@deepseek-ai/dsh-client-runtime/client'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
 import { relativeTime } from '../tree.ts'
+import { StackedFoldersIcon, federationTooltipLines, hasMissingMembers } from '../WorkspacePicker.tsx'
 import css from './Rows.module.css'
+import cssFed from '../Federations.module.css'
 
 /** The standard locale seat, prop-passed from the browser root. */
 type RowTranslate = WorkspaceBrowserProps['t']
@@ -202,6 +205,84 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: 
       copyLabel={t('copy')}
       copiedLabel={t('hover.copied')}
     />
+  )
+}
+
+/**
+ * One durable-federation group header, styled like a Workspace row: the
+ * stacked-folders glyph (chevron swap on hover), the title with the member
+ * tooltip, the member-count caption, and the missing-member tag. Clicking
+ * toggles the group — its federated sessions are ordinary session rows
+ * underneath, so entering one is the same click as any other session. The
+ * hover menu keeps the federation management verbs (rename/delete); the row
+ * never starts a session itself.
+ */
+export function FederationGroupRowItem({ group, onToggle, actions, t }: {
+  group: GroupNode
+  onToggle: () => void
+  /** Federation management verbs; the tree supplies them only for federation groups. */
+  actions: { rename: () => void; delete: () => void }
+  t: RowTranslate
+}) {
+  const federation: FederationView | undefined = group.federation
+  const [menuOpen, setMenuOpen] = useState(false)
+  /* v8 ignore next 3 -- narrowing guard: the tree sets this row only for federation groups. */
+  if (federation === undefined) return null
+  const federationMenuItems = [
+    { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
+    { id: 'delete', label: t('federation.delete.title'), icon: <IconTrashOutline16 />, danger: true },
+  ]
+  return (
+    <div
+      className={clsx(css.projectRow, menuOpen && css.menuOpen)}
+      role="treeitem"
+      aria-expanded={group.expanded}
+      onClick={onToggle}
+    >
+      <span className={clsx(css.slot, css.folder, group.containsCurrent && css.folderActive)}>
+        <StackedFoldersIcon />
+      </span>
+      <span className={clsx(css.slot, css.chevron)}>
+        <IconTriangleRightFill14 className={clsx(css.arrow, group.expanded && css.arrowOpen)} />
+      </span>
+      <span className={css.projectText}>
+        <span className={css.title} title={federationTooltipLines(federation, t)}>{group.label}</span>
+      </span>
+      {hasMissingMembers(federation) && (
+        <span className={cssFed.fedMissingTag} title={t('federation.missingHint')}>{t('federation.memberMissing')}</span>
+      )}
+      {/* Member count, spelled out so it cannot be misread as a session count
+          (sessions are the rows underneath). */}
+      <span className={cssFed.fedBadge}>{t('federation.members.count', { n: federation.memberPaths.length })}</span>
+      <span className={css.rowActions}>
+        <Menu
+          open={menuOpen}
+          onClose={() => { setMenuOpen(false) }}
+          items={federationMenuItems}
+          onSelect={(id) => {
+            setMenuOpen(false)
+            // Unknown ids leave before the dispatch: a future menu row must
+            // not inherit the destructive branch as an else fallback.
+            /* v8 ignore next -- federationMenuItems carries exactly these two rows today. */
+            if (id !== 'rename' && id !== 'delete') return
+            if (id === 'rename') actions.rename()
+            else actions.delete()
+          }}
+          portal
+          closeOnPointerLeave
+          anchor={(
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('federation.actions.aria', { name: federation.title })}
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+            >
+              <IconEllipsisOutline16 />
+            </button>
+          )}
+        />
+      </span>
+    </div>
   )
 }
 

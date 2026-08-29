@@ -1,15 +1,20 @@
 // @vitest-environment jsdom
 /**
- * The browser's federation management block: durable federation rows above
- * the session tree with rename/delete through the browser-owned dialogs.
- * Coverage split: rows hide while the list holds no federations (zero
- * visual diff for federation-free installs) and render regardless of the
- * gray switch (management outlives creation: deleting after switch-off is
- * exactly when it is needed); the rename flow reaches the injected carrier
- * with the edge-trimmed draft, the duplicate rule reads the federation title
- * set, and the delete dialog states the non-destructive semantics before
- * committing. The carriers' wire behavior stays with the runtime package;
- * the pick-flow menu rows stay with workspace-picker.spec.
+ * Federation groups in the browser tree: one collapsible group per durable
+ * federation, its claimed sessions as ordinary clickable rows underneath
+ * (entering one is the same open call as any other session), and rename/
+ * delete through the browser-owned dialogs on the group header. Coverage
+ * split: groups hide while the list holds no federations (zero visual diff
+ * for federation-free installs) and render regardless of the gray switch
+ * (management outlives creation: deleting after switch-off is exactly when
+ * it is needed); the header click toggles, a federated session renders once
+ * (never double-listed under the primary workspace), clicking it issues the
+ * open call, an empty group states itself, and the rename flow reaches the
+ * injected carrier with the edge-trimmed draft while the duplicate rule
+ * reads the federation title set. The delete dialog states the
+ * non-destructive semantics before committing. The carriers' wire behavior
+ * stays with the runtime package; the pick-flow menu rows stay with
+ * workspace-picker.spec.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
@@ -100,10 +105,10 @@ describe('federation management block', () => {
     await runtime.dispose()
   })
 
-  it('renders rows with badge and member tooltip regardless of the gray switch, and renames through the dialog', async () => {
+  it('renders group headers with member caption and tooltip regardless of the gray switch, and renames through the dialog', async () => {
     const runtime = await createRuntime()
     await seedFederations(runtime)
-    // Management outlives creation: switch-off must keep the rows so the
+    // Management outlives creation: switch-off must keep the groups so the
     // leftover compositions stay deletable.
     await runtime.workspaces.update((draft) => { draft.federatedWorkspacesEnabled = false })
     await runtime.root.declare(
@@ -113,12 +118,12 @@ describe('federation management block', () => {
     await runtime.mount({ inject: [...inject], apply })
     const view = runtime.renderRoot()
 
-    await view.findByText('联合工作区')
-    // The tooltip rides the title span (primary root first); the badge sits
-    // beside it inside the same row (both seeded rows show ×2 — scope to one).
-    const titleSpan = view.getByText('alpha + beta')
+    // The tooltip rides the title span (primary root first); the member
+    // caption sits beside it inside the same row (spelled out so it cannot
+    // be misread as a session count).
+    const titleSpan = await view.findByText('alpha + beta')
     expect(titleSpan.getAttribute('title')).toBe('主 alpha\nbeta')
-    expect(within(titleSpan.closest('div')!).getByText('×2')).toBeTruthy()
+    expect(within(titleSpan.closest('div')!).getByText('2 个目录')).toBeTruthy()
 
     fireEvent.click(view.getByLabelText('联合工作区“alpha + beta”的操作'))
     fireEvent.click(view.getByRole('menuitem', { name: '重命名', hidden: true }))
@@ -212,6 +217,63 @@ describe('federation management block', () => {
     })
     await waitFor(() => { expect(view.queryByText('alpha + beta')).toBeNull() })
     expect(view.getByText('docs + site')).toBeTruthy()
+    await runtime.dispose()
+  })
+
+  it('lists claimed sessions under the group once and opens one on the row click', async () => {
+    const runtime = await createRuntime()
+    await seedFederations(runtime)
+    await runtime.sessions.add({
+      id: 'fed-s',
+      summary: { cwd: '/w/alpha', additionalRoots: ['/w/beta'] },
+    }, { current: false })
+    // The host still accounts the federated session under the primary
+    // workspace; the group must render it exactly once, and the row click
+    // must be the same open gesture as any other session (the sidebar entry
+    // regression: a federation row used to start nothing).
+    await runtime.workspaces.update((draft) => {
+      draft.items = draft.items.map(workspace => workspace.workspaceId === 'w1'
+        ? { ...workspace, sessionIds: ['fed-s'] as never }
+        : workspace) as never
+    })
+    await runtime.root.declare(
+      { 'sidebar.workspaces': { kind: 'single', scope: 'root' } } as never,
+      SidebarFrame as never,
+    )
+    await runtime.mount({ inject: [...inject], apply })
+    const view = runtime.renderRoot()
+
+    // Folded by default: the claimed session surfaces only through its group.
+    expect(view.queryByText('fed-s')).toBeNull()
+    // The header click (not the hover menu) toggles the group.
+    fireEvent.click(view.getByText('alpha + beta'))
+    const row = await view.findByText('fed-s')
+    // Expanded with sessions: no empty hint, and no duplicate row under the
+    // alpha workspace group.
+    expect(view.queryByText('暂无会话')).toBeNull()
+    expect(view.getAllByText('fed-s')).toHaveLength(1)
+    fireEvent.click(row)
+
+    await waitFor(() => {
+      expect(runtime.sessions.calls.filter(call => call.method === 'open'))
+        .toEqual([{ method: 'open', args: ['fed-s'] }])
+    })
+    await runtime.dispose()
+  })
+
+  it('states an empty federation group instead of leaving a dead header click', async () => {
+    const runtime = await createRuntime()
+    await seedFederations(runtime)
+    await runtime.root.declare(
+      { 'sidebar.workspaces': { kind: 'single', scope: 'root' } } as never,
+      SidebarFrame as never,
+    )
+    await runtime.mount({ inject: [...inject], apply })
+    const view = runtime.renderRoot()
+
+    expect(view.queryByText('暂无会话')).toBeNull()
+    fireEvent.click(view.getByText('docs + site'))
+    expect(await view.findByText('暂无会话')).toBeTruthy()
     await runtime.dispose()
   })
 })

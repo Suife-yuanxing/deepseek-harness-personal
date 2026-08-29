@@ -4,13 +4,16 @@
  * remains visible.
  */
 import {
-  indexSubagentDescendants, type PendingInteractionStatus, type SessionId, type SessionListState,
-  type SessionSearchResultItem, type SessionSummary, type SubagentDescendantSummary,
-  type WorkspaceId, type WorkspaceView,
+  indexSubagentDescendants, type FederationView, type PendingInteractionStatus, type SessionId,
+  type SessionListState, type SessionSearchResultItem, type SessionSummary,
+  type SubagentDescendantSummary, type WorkspaceId, type WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 
 /** Group key for Sessions outside every Workspace. */
 export const UNGROUPED_KEY = ''
+
+/** Group key prefix for durable federations; the suffix is the federation id. */
+export const FEDERATION_KEY_PREFIX = 'fed:'
 
 /** Display label for the ungrouped bucket row. */
 export const UNGROUPED_LABEL = 'Ungrouped'
@@ -37,12 +40,14 @@ export type SessionOrderBy = 'manual' | 'updated'
 
 /** One workspace group section: header row facts + visible top-level session rows. */
 export interface GroupNode {
-  /** Group key: the workspace id or {@link UNGROUPED_KEY}. */
+  /** Group key: the workspace id, {@link FEDERATION_KEY_PREFIX}-prefixed federation id, or {@link UNGROUPED_KEY}. */
   key: string
-  /** Backing Workspace id; absent only for the ungrouped bucket. */
+  /** Backing Workspace id; absent for federation groups and the ungrouped bucket. */
   workspaceId: WorkspaceId | undefined
+  /** Backing durable federation; absent for workspace groups and the ungrouped bucket. */
+  federation: FederationView | undefined
   cwd: string | undefined
-  /** Workspace creation time (epoch ms); absent only for the ungrouped bucket. */
+  /** Workspace creation time (epoch ms); absent for federation groups and the ungrouped bucket. */
   createdAt: number | undefined
   label: string
   /** Total visible sessions in the group. */
@@ -85,6 +90,7 @@ export interface TreeView {
 interface Group {
   key: string
   workspaceId: WorkspaceId | undefined
+  federation: FederationView | undefined
   cwd: string | undefined
   createdAt: number | undefined
   label: string
@@ -139,12 +145,51 @@ function buildGroup(
   label: string,
   members: readonly SessionSummary[],
   order: 'account' | 'recency',
+  federation: FederationView | undefined = undefined,
 ): Group {
   const sessions = [...members]
   // Real Workspace order comes from sessionIds. Ungrouped falls back to
   // recency until the browser supplies its persisted local order.
   if (order === 'recency') sessions.sort(byRecency)
-  return { key, workspaceId, cwd, createdAt, label, sessions }
+  return { key, workspaceId, federation, cwd, createdAt, label, sessions }
+}
+
+/**
+ * A session belongs to a durable federation only when its whole root set
+ * equals the membership: cwd is the primary member and additionalRoots mirror
+ * the remaining members in order. Anything less (same cwd, different or no
+ * extra roots) stays an ordinary session of its workspace.
+ */
+export function sessionFederationId(
+  session: Pick<SessionSummary, 'cwd' | 'additionalRoots'> | undefined,
+  federations: readonly FederationView[],
+): string | undefined {
+  if (session === undefined || session.cwd === undefined) return undefined
+  const roots = session.additionalRoots ?? []
+  for (const federation of federations) {
+    const [primary, ...rest] = federation.memberPaths
+    if (session.cwd !== primary || rest.length !== roots.length) continue
+    if (rest.every((path, index) => path === roots[index])) return federation.federationId
+  }
+  return undefined
+}
+
+/**
+ * The tree group a session renders under: federation attribution first (its
+ * exact root set names the federation), then the workspace account, then
+ * Ungrouped. Shared by the derivation and the browser's auto-expand effect so
+ * both agree on where the selected session lives.
+ */
+export function sessionGroupKey(
+  session: SessionSummary | undefined,
+  workspaces: readonly WorkspaceView[],
+  federations: readonly FederationView[],
+): string | undefined {
+  if (session === undefined) return undefined
+  const federationId = sessionFederationId(session, federations)
+  if (federationId !== undefined) return FEDERATION_KEY_PREFIX + federationId
+  return (workspaces.find(w => w.sessionIds.includes(session.id))?.workspaceId as string | undefined)
+    ?? UNGROUPED_KEY
 }
 
 /** Apply a stored Ungrouped order and append newly loose Sessions by recency. */
@@ -166,24 +211,54 @@ function orderedUngrouped(members: readonly SessionSummary[], stored: readonly s
 }
 
 /**
- * Group Sessions by Host Workspace: one group per entity in stable Host
- * order, with members resolved from sessionIds in their stored order. Sessions
- * outside every Workspace trail in the browser-local Ungrouped order, which
- * falls back to recency before that order is initialized.
+ * Group Sessions by durable federation first, then Host Workspace: one group
+ * per entity in stable Host order, with members resolved from sessionIds in
+ * their stored order. Federation groups lead the tree; their sessions are
+ * attributed by the exact root-set rule and never double-listed under the
+ * primary workspace. Remaining sessions outside every entity trail in the
+ * browser-local Ungrouped order, which falls back to recency before that
+ * order is initialized.
  */
 function groupByWorkspace(
   list: SessionListState,
   workspaces: readonly WorkspaceView[],
+  federations: readonly FederationView[],
   archived: ReadonlySet<SessionId>,
   ungroupedOrder: readonly string[] | undefined,
 ): Group[] {
   const groups: Group[] = []
   const accounted = new Set<SessionId>()
+  if (federations.length > 0) {
+    const members = new Map<string, SessionSummary[]>()
+    for (const id of list.ids) {
+      const summary = list.byId[id]
+      if (summary === undefined || !sessionVisible(summary, list.current, archived)) continue
+      const federationId = sessionFederationId(summary, federations)
+      if (federationId === undefined) continue
+      accounted.add(id)
+      const bucket = members.get(federationId)
+      if (bucket === undefined) members.set(federationId, [summary])
+      else bucket.push(summary)
+    }
+    for (const federation of federations) {
+      groups.push(buildGroup(
+        FEDERATION_KEY_PREFIX + federation.federationId,
+        undefined,
+        undefined,
+        undefined,
+        federation.title,
+        members.get(federation.federationId) ?? [],
+        'recency',
+        federation,
+      ))
+    }
+  }
   for (const workspace of workspaces) {
     const members: SessionSummary[] = []
     for (const id of workspace.sessionIds) {
       const summary = list.byId[id]
       if (summary === undefined) continue // account may lead the list pull; the row appears when the summary lands
+      if (accounted.has(id)) continue // a federated session renders once, under its federation
       accounted.add(id)
       if (!sessionVisible(summary, list.current, archived)) continue
       members.push(summary)
@@ -230,13 +305,16 @@ function sessionNode(
 /**
  * Derive the workspace browser groups with every session as a top-level row.
  *
- * Every group shows; sessions populate under expanded groups in the selected
- * local order. Blank sessions are excluded except for the selected
- * provisional New Session row; archived sessions are excluded everywhere.
- * Content search lives outside this derivation
+ * Durable federations lead the tree as their own groups (their claimed
+ * sessions are attributed by the exact root-set rule); workspace groups and
+ * Ungrouped follow. Every group shows; sessions populate under expanded
+ * groups in the selected local order. Blank sessions are excluded except for
+ * the selected provisional New Session row; archived sessions are excluded
+ * everywhere. Content search lives outside this derivation
  * (see {@link deriveSearchResults}).
  * @param list - sessions list snapshot (`current` feeds containsCurrent).
  * @param workspaces - real workspaces in stable Host order.
+ * @param federations - durable federations in registry order.
  * @param archivedSessionIds - registry-global archive set.
  * @param view - local expansion arrays.
  * @returns group sections in render order.
@@ -244,22 +322,25 @@ function sessionNode(
 export function deriveGroups(
   list: SessionListState,
   workspaces: readonly WorkspaceView[],
+  federations: readonly FederationView[],
   archivedSessionIds: readonly SessionId[],
   view: TreeView,
 ): GroupNode[] {
   const archived = new Set(archivedSessionIds)
   const expandedGroups = new Set(view.expandedGroups)
   const descendants = indexSubagentDescendants(list.byId)
-  const currentGroup = list.current === undefined
-    ? undefined
-    : (workspaces.find(w => w.sessionIds.includes(list.current as SessionId))?.workspaceId as string | undefined)
-        ?? UNGROUPED_KEY
+  const currentGroup = sessionGroupKey(
+    list.current === undefined ? undefined : list.byId[list.current],
+    workspaces,
+    federations,
+  )
   const groups: GroupNode[] = []
-  for (const g of groupByWorkspace(list, workspaces, archived, view.ungroupedOrder)) {
+  for (const g of groupByWorkspace(list, workspaces, federations, archived, view.ungroupedOrder)) {
     const expanded = expandedGroups.has(g.key)
     groups.push({
       key: g.key,
       workspaceId: g.workspaceId,
+      federation: g.federation,
       cwd: g.cwd,
       createdAt: g.createdAt,
       label: g.label,
