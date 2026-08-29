@@ -18,6 +18,12 @@
  * including creating a new directory to hand back. That occupant-owned
  * creation is why adding a workspace has a single route: an unoccupied hole
  * leaves the surface with no add affordance at all.
+ * The create-federation panel is a SECOND owner conversation over the same
+ * hole: while adding a free-folder member it renders the surface's hole with
+ * itself as owner and adopts a picked path by appending a member (no
+ * workspace registration). Only one conversation drives a pick at a time —
+ * the panel opens over a closed menu — so the shared occupant never sees
+ * two open requests.
  * Two holes exist because the two menu surfaces are independent slot entries
  * and a hole has exactly one declaring entry — they carry the same owner
  * contract and the same occupant.

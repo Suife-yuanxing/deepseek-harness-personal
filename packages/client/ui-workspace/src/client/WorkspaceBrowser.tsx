@@ -469,8 +469,8 @@ function SessionTree({
                   t={t}
                   onToggle={toggleGroup}
                   actions={{
-                    rename: () => onFedRenameRequest(group.federation as FederationView),
-                    delete: () => onFedDeleteRequest(group.federation as FederationView),
+                    rename: () => { onFedRenameRequest(group.federation as FederationView) },
+                    delete: () => { onFedDeleteRequest(group.federation as FederationView) },
                   }}
                 />
               ) : (

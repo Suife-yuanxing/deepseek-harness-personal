@@ -341,6 +341,8 @@ export function WorkspacePickFlow({
         <CreateFederationPanel
           createFederation={createFederation}
           workspaces={workspaces}
+          flowAvailable={flowAvailable}
+          renderDirectoryFlow={renderDirectoryFlow}
           t={t}
           onClose={() => { setCreatePanelOpen(false) }}
         />

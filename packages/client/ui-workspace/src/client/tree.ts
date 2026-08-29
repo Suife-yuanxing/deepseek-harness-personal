@@ -145,7 +145,7 @@ function buildGroup(
   label: string,
   members: readonly SessionSummary[],
   order: 'account' | 'recency',
-  federation: FederationView | undefined = undefined,
+  federation?: FederationView,
 ): Group {
   const sessions = [...members]
   // Real Workspace order comes from sessionIds. Ungrouped falls back to
@@ -188,8 +188,7 @@ export function sessionGroupKey(
   if (session === undefined) return undefined
   const federationId = sessionFederationId(session, federations)
   if (federationId !== undefined) return FEDERATION_KEY_PREFIX + federationId
-  return (workspaces.find(w => w.sessionIds.includes(session.id))?.workspaceId as string | undefined)
-    ?? UNGROUPED_KEY
+  return workspaces.find(w => w.sessionIds.includes(session.id))?.workspaceId ?? UNGROUPED_KEY
 }
 
 /** Apply a stored Ungrouped order and append newly loose Sessions by recency. */
