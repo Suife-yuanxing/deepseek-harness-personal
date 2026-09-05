@@ -191,7 +191,11 @@ export function sessionGroupKey(
   return workspaces.find(w => w.sessionIds.includes(session.id))?.workspaceId ?? UNGROUPED_KEY
 }
 
-/** Apply a stored Ungrouped order and append newly loose Sessions by recency. */
+/**
+ * Apply a stored Ungrouped order; Sessions the stored order has never seen
+ * (freshly created, or newly ungrouped) lead the bucket by recency — a new
+ * session belongs at the top of the list, not at its tail.
+ */
 function orderedUngrouped(members: readonly SessionSummary[], stored: readonly string[]): SessionSummary[] {
   const byId = new Map(members.map(session => [session.id as string, session]))
   const included = new Set<string>()
@@ -202,11 +206,14 @@ function orderedUngrouped(members: readonly SessionSummary[], stored: readonly s
     ordered.push(session)
     included.add(key)
   }
-  for (const session of [...members].sort(byRecency)) {
+  const fresh: SessionSummary[] = []
+  for (const session of members) {
     if (included.has(session.id)) continue
-    ordered.push(session)
+    fresh.push(session)
+    included.add(session.id)
   }
-  return ordered
+  fresh.sort(byRecency)
+  return [...fresh, ...ordered]
 }
 
 /**

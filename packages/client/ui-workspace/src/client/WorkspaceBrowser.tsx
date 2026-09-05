@@ -97,16 +97,39 @@ function reconciledSessionOrder(sessionIds: readonly SessionId[], stored: readon
 }
 
 /** Newest update first with stable Session identity as the tie-break. */
-function compareSessionRecency(a: SessionId, b: SessionId, byId: SessionListState['byId']): number {
+function compareSessionRecency(
+  a: SessionId,
+  b: SessionId,
+  byId: Readonly<Record<string, { updatedAt: number } | undefined>>,
+): number {
   const aUpdatedAt = byId[a]?.updatedAt ?? Number.NEGATIVE_INFINITY
   const bUpdatedAt = byId[b]?.updatedAt ?? Number.NEGATIVE_INFINITY
   if (aUpdatedAt !== bUpdatedAt) return bUpdatedAt - aUpdatedAt
   return a < b ? -1 : 1
 }
 
+/**
+ * Front the Sessions a stored order has never seen (freshly created, or newly
+ * arrived in the bucket), newest first: a new session belongs at the top of
+ * its list, not at the reconcile-append tail. Known sessions keep the stored
+ * order untouched — manual arrangement survives.
+ */
+function frontNewSessions(
+  order: readonly SessionId[],
+  stored: readonly string[],
+  byId: Readonly<Record<string, { updatedAt: number } | undefined>>,
+): SessionId[] {
+  const known = new Set<string>(stored)
+  const fresh = order.filter(id => !known.has(id as string))
+  if (fresh.length === 0) return [...order]
+  fresh.sort((a, b) => compareSessionRecency(a, b, byId))
+  const freshIds = new Set(fresh)
+  return [...fresh, ...order.filter(id => !freshIds.has(id))]
+}
+
 /** Reconcile one editable order account and apply its activity-promotion policy. */
 function nextSessionOrderAccount({
-  sessionIds, previousOrder, previousUpdatedAt, list, orderBy, sortByRecency,
+  sessionIds, previousOrder, previousUpdatedAt, list, orderBy, sortByRecency, prependNew = false,
 }: {
   sessionIds: readonly SessionId[]
   previousOrder: readonly string[] | undefined
@@ -114,6 +137,8 @@ function nextSessionOrderAccount({
   list: SessionListState
   orderBy: SessionOrderBy
   sortByRecency: boolean
+  /** Manual mode leads never-stored Sessions instead of appending them (the bucket has no Host tail to honor). */
+  prependNew?: boolean
 }): { order: SessionId[]; updatedAt: Record<string, number>; changed: boolean } {
   let order = reconciledSessionOrder(sessionIds, previousOrder)
   if (sortByRecency) {
@@ -130,6 +155,8 @@ function nextSessionOrderAccount({
       const promotedIds = new Set(promoted)
       order = [...promoted, ...order.filter(id => !promotedIds.has(id))]
     }
+  } else if (prependNew && previousOrder !== undefined) {
+    order = frontNewSessions(order, previousOrder, list.byId)
   }
   const updatedAt: Record<string, number> = {}
   for (const id of sessionIds) {
@@ -293,14 +320,17 @@ function SessionTree({
     if (list.phase !== 'ready') return
     const switchedToUpdated = previousOrderBy.current !== 'updated' && orderBy === 'updated'
     previousOrderBy.current = orderBy
-    const accounts = [
+    const accounts: readonly { key: string; sessionIds: SessionId[]; prependNew: boolean }[] = [
       ...workspaces.map(workspace => ({
         key: workspace.workspaceId as string,
         sessionIds: workspace.sessionIds.filter(id => list.byId[id] !== undefined),
+        prependNew: false,
       })),
-      { key: UNGROUPED_KEY, sessionIds: ungroupedSessionIds },
+      // The Ungrouped account is browser-local (no Host order to honor): in
+      // manual mode a fresh session leads the bucket instead of trailing it.
+      { key: UNGROUPED_KEY, sessionIds: ungroupedSessionIds, prependNew: true },
     ]
-    for (const { key, sessionIds } of accounts) {
+    for (const { key, sessionIds, prependNew } of accounts) {
       const previousOrder = sessionOrderByAccount[key]
       const previousUpdatedAt = sessionUpdatedAtByAccount[key] ?? {}
       const next = nextSessionOrderAccount({
@@ -310,6 +340,7 @@ function SessionTree({
         list,
         orderBy,
         sortByRecency: orderBy === 'updated' && (previousOrder === undefined || switchedToUpdated),
+        prependNew,
       })
       if (next.changed) {
         syncSessionOrderAccount(key, next.order.map(id => id as string), next.updatedAt)
@@ -324,8 +355,12 @@ function SessionTree({
     })
   }, [sessionOrderByAccount, workspaces])
   const orderedUngroupedSessionIds = useMemo(
-    () => reconciledSessionOrder(ungroupedSessionIds, sessionOrderByAccount[UNGROUPED_KEY]),
-    [sessionOrderByAccount, ungroupedSessionIds],
+    () => frontNewSessions(
+      reconciledSessionOrder(ungroupedSessionIds, sessionOrderByAccount[UNGROUPED_KEY]),
+      sessionOrderByAccount[UNGROUPED_KEY] ?? [],
+      list.byId,
+    ),
+    [list, sessionOrderByAccount, ungroupedSessionIds],
   )
   const groups = useMemo(
     () => deriveGroups(list, orderedWorkspaces, federations, archivedSessionIds, {
@@ -612,6 +647,9 @@ function FlatList({
       list,
       orderBy,
       sortByRecency: orderBy === 'updated' && (previousOrder === undefined || switchedToUpdated),
+      // The flat list is browser-local too: in manual mode a fresh session
+      // leads instead of trailing (the list's own semantics are newest-first).
+      prependNew: true,
     })
     if (next.changed) {
       syncSessionOrderAccount(FLAT_SESSION_ORDER_KEY, next.order.map(id => id as string), next.updatedAt)
@@ -619,11 +657,16 @@ function FlatList({
   }, [list, orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, sessionIds, syncSessionOrderAccount])
   const rows = useMemo(() => {
     const byId = new Map(baseRows.map(row => [row.id, row]))
-    return reconciledSessionOrder(sessionIds, sessionOrderByAccount[FLAT_SESSION_ORDER_KEY])
-      .flatMap((id) => {
-        const row = byId.get(id)
-        return row === undefined ? [] : [row]
-      })
+    const stored = sessionOrderByAccount[FLAT_SESSION_ORDER_KEY]
+    const order = frontNewSessions(
+      reconciledSessionOrder(sessionIds, stored),
+      stored ?? [],
+      Object.fromEntries(baseRows.map(row => [row.id, row])),
+    )
+    return order.flatMap((id) => {
+      const row = byId.get(id)
+      return row === undefined ? [] : [row]
+    })
   }, [baseRows, sessionOrderByAccount, sessionIds])
   const [drag, setDrag] = useState<DragState | null>(null)
   const dropCommitted = useRef(false)

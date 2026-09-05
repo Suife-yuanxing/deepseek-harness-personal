@@ -894,6 +894,49 @@ describe('WorkspaceBrowser', () => {
     ])
   })
 
+  it('leads a freshly created Ungrouped session at the top in manual order', async () => {
+    const b = mount({
+      useSessions: hook(sessionState([summary('one', 3), summary('two', 2)])),
+      useWorkspaces: hook(workspaceState([])),
+    })
+    fireEvent.click(screen.getByText('未分组'))
+    // Account initializes to the arrival order; a session it has never seen
+    // must then lead the bucket (recency), not trail the reconcile-append tail.
+    await waitFor(() => {
+      expect(b.store.getSnapshot().sessionOrderByAccount[UNGROUPED_KEY]).toEqual(['one', 'two'])
+    })
+    rerender(b, { useSessions: hook(sessionState([summary('new', 9), summary('one', 3), summary('two', 2)])) })
+    await waitFor(() => {
+      expect(b.store.getSnapshot().sessionOrderByAccount[UNGROUPED_KEY]).toEqual(['new', 'one', 'two'])
+    })
+    expect(screen.getAllByRole('treeitem').slice(1).map(row => row.textContent)).toEqual([
+      expect.stringContaining('new'),
+      expect.stringContaining('one'),
+      expect.stringContaining('two'),
+    ])
+  })
+
+  it('leads a fresh session at the top of the flat list in manual order', async () => {
+    const b = mount({
+      useSessions: hook(sessionState([summary('one', 3), summary('two', 2)])),
+      useWorkspaces: hook(workspaceState([])),
+    })
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
+    await waitFor(() => {
+      expect(b.store.getSnapshot().sessionOrderByAccount[FLAT_SESSION_ORDER_KEY]).toEqual(['one', 'two'])
+    })
+    rerender(b, { useSessions: hook(sessionState([summary('new', 9), summary('one', 3), summary('two', 2)])) })
+    await waitFor(() => {
+      expect(b.store.getSnapshot().sessionOrderByAccount[FLAT_SESSION_ORDER_KEY]).toEqual(['new', 'one', 'two'])
+    })
+    expect(screen.getAllByRole('treeitem').map(row => row.textContent)).toEqual([
+      expect.stringContaining('new'),
+      expect.stringContaining('one'),
+      expect.stringContaining('two'),
+    ])
+  })
+
   it('still sends the reorder when the dragged row left the group mid-drag', () => {
     const insertSessionBefore = vi.fn(async () => {})
     const sessions = sessionState([summary('one', 2), summary('two', 1)])
