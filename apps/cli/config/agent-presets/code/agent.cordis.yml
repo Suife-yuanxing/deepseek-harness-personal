@@ -28,11 +28,6 @@
 
 # The preset's own persona, shadowing the deployment default for this agent.
 # `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
-- id: persona
-  name: '@deepseek-ai/dsh-persona'
-  config:
-    text: >-
-      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -260,3 +255,5 @@
   name: '@deepseek-ai/dsh-agent-tool-presentation'
   config:
     mode: code
+
+#dsh-local-patch:v2026-08-23

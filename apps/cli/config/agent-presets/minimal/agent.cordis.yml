@@ -5,12 +5,6 @@
 # context snapshots are suppressed for this preset, and the model composes only
 # persistent `bash` and `str_replace_editor`. Context compaction is absent.
 
-- id: persona
-  name: '@deepseek-ai/dsh-persona'
-  config:
-    text: You are a helpful software engineer assistant.
-    complete: true
-    includeRuntimeContext: false
 
 # The PTY registry is an agent-owned service, so it lives in an entry-local
 # realm. The backend still consumes the host sandbox policy and subprocess
@@ -60,3 +54,5 @@
       name: '@deepseek-ai/dsh-tool-str-replace-editor'
       config:
         maxOutputChars: 16000
+
+#dsh-local-patch:v2026-08-23
