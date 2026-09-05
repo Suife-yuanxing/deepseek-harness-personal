@@ -51,6 +51,48 @@ function renderSettled(
 }
 
 /**
+ * Bounded LRU over settled renders, keyed by the source text. Remounting a
+ * message subtree (session switch, chat↔trajectory view-tab round trip)
+ * re-runs this pure function for every message, and the mdast parse plus
+ * element build dominate that remount; the cache turns a revisit into a
+ * lookup. Entries stay valid only while the `codeLabels` and `fileMentions`
+ * identities match — those objects are reference-stable per locale revision
+ * and per resolved mention set, and their values are baked into the cached
+ * elements (fence copy labels, mention links). Reuse refreshes recency;
+ * the oldest entry drops once the limit is exceeded so long browsing
+ * sessions stay bounded.
+ */
+const SETTLED_CACHE_LIMIT = 200
+
+interface SettledCacheEntry {
+  readonly codeLabels: MarkdownCodeLabels | undefined
+  readonly fileMentions: MarkdownFileMentions | undefined
+  readonly children: ReactNode[]
+}
+const settledCache = new Map<string, SettledCacheEntry>()
+
+function cachedSettled(
+  text: string,
+  codeLabels: MarkdownCodeLabels | undefined,
+  fileMentions: MarkdownFileMentions | undefined,
+): ReactNode[] {
+  const hit = settledCache.get(text)
+  if (hit !== undefined && hit.codeLabels === codeLabels && hit.fileMentions === fileMentions) {
+    settledCache.delete(text)
+    settledCache.set(text, hit)
+    return hit.children
+  }
+  const children = renderSettled(text, codeLabels, fileMentions)
+  settledCache.delete(text)
+  settledCache.set(text, { codeLabels, fileMentions, children })
+  if (settledCache.size > SETTLED_CACHE_LIMIT) {
+    const oldest = settledCache.keys().next().value
+    if (oldest !== undefined) settledCache.delete(oldest)
+  }
+  return children
+}
+
+/**
  * Streaming render state for one growing message: the incremental parser,
  * the frozen blocks' cached elements, and the reference/footnote state their
  * rendering consumed (footnote numbering assigned to frozen references is
@@ -164,7 +206,7 @@ export const MarkdownText = memo(function MarkdownText({ text, streaming = false
   const children = useMemo(() => {
     if (!streaming) {
       streamRef.current = null
-      return renderSettled(text, codeLabels, fileMentions)
+      return cachedSettled(text, codeLabels, fileMentions)
     }
     if (streamRef.current === null || streamLabelsRef.current !== codeLabels) {
       streamRef.current = new StreamingRenderer(codeLabels)

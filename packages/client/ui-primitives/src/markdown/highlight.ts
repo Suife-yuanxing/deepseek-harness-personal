@@ -251,6 +251,38 @@ const warmupTimer = setTimeout(() => { highlighter() }, 0)
 ;(warmupTimer as { unref?: () => void }).unref?.()
 
 /**
+ * Bounded LRU over successful highlight results, keyed by resolved grammar id
+ * and source text. Remounts (session switch, view-tab round trip) and repeated
+ * card expansions re-request the same highlight; shiki tokenization is a pure
+ * per-call scan, so a hit returns the identical HTML/line structure without
+ * the scan. Only successful results (a registered, loaded grammar) enter the
+ * cache: a not-yet-loaded lazy grammar keeps falling through to the caller's
+ * plain fallback until its load notification re-renders, and that later
+ * successful call then caches. Reuse refreshes recency; the oldest entry
+ * drops once the limit is exceeded.
+ */
+const HIGHLIGHT_CACHE_LIMIT = 128
+const highlightHtmlCache = new Map<string, string>()
+const highlightLinesCache = new Map<string, HighlightSpan[][]>()
+
+function cachedLookup<V>(cache: Map<string, V>, key: string, build: () => V): V {
+  const hit = cache.get(key)
+  if (hit !== undefined) {
+    cache.delete(key)
+    cache.set(key, hit)
+    return hit
+  }
+  const value = build()
+  cache.delete(key)
+  cache.set(key, value)
+  if (cache.size > HIGHLIGHT_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value
+    if (oldest !== undefined) cache.delete(oldest)
+  }
+  return value
+}
+
+/**
  * Highlight `code` into shiki's HTML (a single `<pre class="shiki">` tree)
  * when `lang` maps to a registered grammar; `undefined` means the caller
  * renders its plain fallback. A lazy grammar not yet loaded returns `undefined`
@@ -264,7 +296,8 @@ export function highlightToHtml(code: string, lang: string | undefined): string 
   const resolved = lang === undefined ? undefined : LANG_ALIASES.get(lang.toLowerCase())
   if (resolved === undefined) return undefined
   if (!ensureGrammar(resolved)) return undefined
-  return highlighter().codeToHtml(code, { lang: resolved, theme: 'css-variables' })
+  return cachedLookup(highlightHtmlCache, `${resolved}\u0000${code}`, () =>
+    highlighter().codeToHtml(code, { lang: resolved, theme: 'css-variables' }))
 }
 
 /**
@@ -297,15 +330,17 @@ export function highlightLines(code: string, lang: string | undefined): Highligh
   const resolved = lang === undefined ? undefined : LANG_ALIASES.get(lang.toLowerCase())
   if (resolved === undefined) return undefined
   if (!ensureGrammar(resolved)) return undefined
-  const { tokens } = highlighter().codeToTokens(code, { lang: resolved, theme: 'css-variables' })
-  // shiki tokenizes `a\nb` into two lines; a trailing newline (`a\n`) adds a
-  // third, empty line the caller's own line array does not carry. Drop that
-  // one terminator line so the two structures stay in step. The explicit
-  // `last !== undefined` (over `tokens[...]?.length`) keeps a single branch for
-  // per-file coverage, matching TerminalBlock's terminator check.
-  const last = tokens[tokens.length - 1]
-  const lines = tokens.length > 1 && last !== undefined && last.length === 0
-    ? tokens.slice(0, -1)
-    : tokens
-  return lines.map(line => line.map(token => ({ text: token.content, style: { color: token.color } })))
+  return cachedLookup(highlightLinesCache, `${resolved}\u0000${code}`, () => {
+    const { tokens } = highlighter().codeToTokens(code, { lang: resolved, theme: 'css-variables' })
+    // shiki tokenizes `a\nb` into two lines; a trailing newline (`a\n`) adds a
+    // third, empty line the caller's own line array does not carry. Drop that
+    // one terminator line so the two structures stay in step. The explicit
+    // `last !== undefined` (over `tokens[...]?.length`) keeps a single branch for
+    // per-file coverage, matching TerminalBlock's terminator check.
+    const last = tokens[tokens.length - 1]
+    const lines = tokens.length > 1 && last !== undefined && last.length === 0
+      ? tokens.slice(0, -1)
+      : tokens
+    return lines.map(line => line.map(token => ({ text: token.content, style: { color: token.color } })))
+  })
 }

@@ -74,11 +74,14 @@ function pagingAnchor(list: HTMLElement, scrollport: HTMLElement): HTMLElement |
     }
   }
   const rows = [...list.querySelectorAll<HTMLElement>('[data-chat-anchor-key]')]
-  const visibleRows = rows.filter((row) => {
+  // First visible row in flow order: scan short-circuits at the topmost
+  // visible row instead of measuring every mounted row (jsdom/pre-layout
+  // fallback for the elementsFromPoint path above).
+  for (const row of rows) {
     const rect = row.getBoundingClientRect()
-    return rect.bottom > viewport.top && rect.top < visibleBottom
-  })
-  return visibleRows[0] ?? rows[0] ?? null
+    if (rect.bottom > viewport.top && rect.top < visibleBottom) return row
+  }
+  return rows[0] ?? null
 }
 
 type ChatScrollPosition = NonNullable<ReturnType<ChatViewSlotProps['chatScroll']['read']>>
@@ -280,7 +283,12 @@ export function ChatView({
       ? floor - el.scrollTop <= FOLLOW_THRESHOLD + 1
       : atBottomRef.current
     if (!movedByReader && isAtBottom) {
-      toBottom(el)
+      // Already pinned by a programmatic write (follow/toBottom both save null
+      // and clear the anchor synchronously): re-running toBottom would
+      // re-read scrollHeight and re-emit the same store write on every
+      // follow-driven scroll event. Keep the ledger in step with clamped
+      // deliveries and return.
+      observedTopRef.current = el.scrollTop
       return
     }
     atBottomRef.current = isAtBottom

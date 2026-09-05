@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { CodeBlock } from '../src/markdown/CodeBlock.tsx'
-import { highlightToHtml } from '../src/markdown/highlight.ts'
+import { highlightLines, highlightToHtml } from '../src/markdown/highlight.ts'
 
 afterEach(cleanup)
 
@@ -48,6 +48,38 @@ describe('highlightToHtml', () => {
     await vi.waitFor(() => {
       for (const alias of LAZY_ALIASES) expect(highlightToHtml('x', alias)).toContain('shiki')
     }, { timeout: 5_000 })
+  })
+})
+
+describe('highlight result caches', () => {
+  // The caches are pure memoization over shiki's deterministic tokenization,
+  // so a hit is only observable as identical output; these specs drive every
+  // cache branch (hit refresh, rebuild after eviction) through the public API.
+  it('serves a repeated highlightToHtml call from the cache with identical output', () => {
+    const first = highlightToHtml('const cached = 1', 'typescript')
+    const second = highlightToHtml('const cached = 1', 'typescript')
+    expect(second).toBe(first)
+    expect(second).toContain('shiki')
+  })
+
+  it('keeps highlightToHtml results correct across LRU eviction', () => {
+    const evicted = highlightToHtml('const evicted = 0', 'typescript')
+    // One entry past the limit, each a distinct snippet, pushes the snippet
+    // above out of the cache; the next request rebuilds the same HTML.
+    for (let i = 1; i <= 129; i++) highlightToHtml(`const evictor${i} = ${i}`, 'typescript')
+    expect(highlightToHtml('const evicted = 0', 'typescript')).toBe(evicted)
+  })
+
+  it('serves a repeated highlightLines call from the cache with equal runs', () => {
+    const first = highlightLines('const a = 1\nconst b = 2', 'typescript')
+    expect(first).toEqual(highlightLines('const a = 1\nconst b = 2', 'typescript'))
+    expect(first![0]![0]!.style.color).toContain('--shiki-')
+  })
+
+  it('keeps highlightLines results correct across LRU eviction', () => {
+    const evicted = highlightLines('const linesEvicted = 0', 'typescript')
+    for (let i = 1; i <= 129; i++) highlightLines(`const linesEvictor${i} = ${i}`, 'typescript')
+    expect(highlightLines('const linesEvicted = 0', 'typescript')).toEqual(evicted)
   })
 })
 

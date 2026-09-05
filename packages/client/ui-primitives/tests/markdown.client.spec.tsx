@@ -516,3 +516,48 @@ describe('JsonBlock', () => {
     expect(body).toContain('截断')
   })
 })
+
+describe('MarkdownText settled cache', () => {
+  // The cache is transparent memoization of a pure render, so the specs pin
+  // user-visible behavior across every cache branch: a remounted identical
+  // document (cache hit), a changed codeLabels identity (dependency miss),
+  // and a request returning after the LRU dropped it (eviction rebuild).
+  it('renders an identically remounted document with the same output', () => {
+    const source = 'Cached **bold** text.\n\n```ts\nconst x = 1\n```\n\nSecond paragraph.'
+    for (let mount = 0; mount < 2; mount++) {
+      const { container, unmount } = render(<MarkdownText text={source} />)
+      expect(container.querySelector('strong')?.textContent).toBe('bold')
+      expect(container.querySelector('pre.shiki')).not.toBeNull()
+      expect(container.querySelectorAll('p')).toHaveLength(2)
+      unmount()
+    }
+  })
+
+  it('re-renders when the code labels identity changes', () => {
+    const source = 'Labels\n\n```json\n{"a":1}\n```'
+    const before = render(<MarkdownText text={source} />)
+    expect(screen.getByRole('button', { name: '复制' })).toBeTruthy()
+    before.unmount()
+    const after = render(
+      <MarkdownText text={source} codeLabels={{ copyLabel: '拷贝', copiedLabel: '已拷贝' }} />,
+    )
+    expect(screen.getByRole('button', { name: '拷贝' })).toBeTruthy()
+    after.unmount()
+  })
+
+  it('re-renders correctly after the LRU evicts an entry', () => {
+    const evicted = '## Evicted heading\n\nEvicted body.'
+    const first = render(<MarkdownText text={evicted} />)
+    expect(first.container.querySelector('h2')?.textContent).toBe('Evicted heading')
+    first.unmount()
+    // One document past the per-cache limit, each distinct, so the eviction
+    // branch runs during this loop and the entry above drops out.
+    for (let i = 0; i < 201; i++) {
+      const churn = render(<MarkdownText text={`Churn ${i}\n\nChurn body ${i}.`} />)
+      churn.unmount()
+    }
+    const rebuilt = render(<MarkdownText text={evicted} />)
+    expect(rebuilt.container.querySelector('h2')?.textContent).toBe('Evicted heading')
+    rebuilt.unmount()
+  })
+})

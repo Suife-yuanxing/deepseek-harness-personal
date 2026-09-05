@@ -9,6 +9,16 @@
   font-size: 16px;
   line-height: 28px;
   color: var(--dsw-alias-label-primary);
+  /* Offscreen assistant bodies skip layout and paint: they are the dominant
+     content mass of a session, so skipping them keeps streaming re-layout,
+     session-switch mount, and the AppFrame track transition cheap. `auto`
+     keeps each body's last rendered size as the placeholder, so scrollbar
+     geometry stays stable once a body has painted. On-screen bodies keep
+     only layout/style containment — markdown content is self-contained
+     (menus, lightbox and hover cards portal out), so no fixed-position
+     descendant is affected. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
 }
 
 .body {
