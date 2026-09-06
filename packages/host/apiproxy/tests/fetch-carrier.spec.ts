@@ -167,6 +167,9 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           result: { ok: true, value: { items: [], archivedSessionIds: [], federations: [], federatedWorkspacesEnabled: true } },
         }
       },
+      async unarchiveSession(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { archivedSessionIds: [] } } }
+      },
       async createFederation(request) {
         const federation = {
           federationId: 'fx-fed' as never, title: 'a + b', memberPaths: [],
