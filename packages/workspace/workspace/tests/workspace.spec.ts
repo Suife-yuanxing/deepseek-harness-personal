@@ -944,4 +944,27 @@ describe('registry-global session archive', () => {
     const upgraded = await harness({ pool: legacy })
     expect(upgraded.registry.archivedSessionIds).toEqual([])
   })
+
+  it('unarchives durably preserving the remaining order, and is idempotent for ghosts', async () => {
+    const dir = await makeDir('unarchive-home')
+    const result = await harness({ sessions: [header('a', dir, 100), header('b', dir, 200)] })
+    await result.registry.archiveSession(SessionId('a'))
+    await result.registry.archiveSession(SessionId('b'))
+    expect(result.registry.archivedSessionIds).toEqual(['a', 'b'])
+
+    await result.registry.unarchiveSession(SessionId('a'))
+    expect(result.registry.archivedSessionIds).toEqual(['b'])
+    // The workspace accounting slot is untouched (unarchive restores the position).
+    expect(result.registry.list()[0]!.sessionIds).toContain('a')
+    expect(storedState(result.pool).archivedSessionIds).toEqual(['b'])
+    const changesAfterUnarchive = result.changes.filter(change => change.table === '').length
+
+    // Idempotent repeats — including a never-archived ghost id — neither
+    // rewrite the medium nor emit a change: ghost cleanup is a legitimate
+    // unarchive and, unlike archive, runs no session-existence check.
+    await result.registry.unarchiveSession(SessionId('a'))
+    await result.registry.unarchiveSession(SessionId('ghost'))
+    expect(result.registry.archivedSessionIds).toEqual(['b'])
+    expect(result.changes.filter(change => change.table === '').length).toBe(changesAfterUnarchive)
+  })
 })
