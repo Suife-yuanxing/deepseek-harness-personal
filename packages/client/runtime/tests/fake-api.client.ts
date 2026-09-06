@@ -205,6 +205,9 @@ export class FakeApiClient implements IApiClient {
   onWorkspaceArchiveSession: (payload: unknown) => Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>> =
     payload => Promise.resolve(ok({ archivedSessionIds: [(payload as { sessionId: SessionId }).sessionId] }))
 
+  onWorkspaceUnarchiveSession: (payload: unknown) => Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>> =
+    () => Promise.resolve(ok({ archivedSessionIds: [] }))
+
   onWorkspaceCreateFederation: (payload: unknown) => Promise<RpcResponse<{ federation: FederationView; created: boolean }>> =
     () => Promise.resolve(ok({
       federation: { federationId: 'fk-fed' as FederationId, title: 'a + b', memberPaths: [], createdAt: '', updatedAt: '' },
@@ -252,6 +255,8 @@ export class FakeApiClient implements IApiClient {
       this.record('workspace.insertSessionBefore', payload, this.onWorkspaceInsertSessionBefore(payload)),
     archiveSession: (payload: unknown) =>
       this.record('workspace.archiveSession', payload, this.onWorkspaceArchiveSession(payload)),
+    unarchiveSession: (payload: unknown) =>
+      this.record('workspace.unarchiveSession', payload, this.onWorkspaceUnarchiveSession(payload)),
     createFederation: (payload: unknown) =>
       this.record('workspace.createFederation', payload, this.onWorkspaceCreateFederation(payload)),
     listFederations: (payload: unknown) =>

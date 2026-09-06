@@ -245,6 +245,18 @@ export class WorkspaceManager {
   }
 
   /**
+   * Remove one session from the registry-global archive set, then install
+   * the returned full set without waiting for the changed frame.
+   * @param sessionId - session to unarchive.
+   * @returns the wire result.
+   */
+  async unarchiveSession(sessionId: SessionId): Promise<RpcResult<{ archivedSessionIds: SessionId[] }>> {
+    const { result } = await this.api.workspace.unarchiveSession({ sessionId })
+    if (result.ok) this.installArchived(result.value.archivedSessionIds)
+    return result
+  }
+
+  /**
    * Create a federation over validated members. The unary echo installs
    * nothing locally: the follow-up refresh re-pulls the authoritative list,
    * keeping one install path (the baseline) for the read face.

@@ -2751,6 +2751,16 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         }
         return ok(request, { archivedSessionIds: [...archivedSessionIds] })
       },
+      unarchiveSession: (request) => {
+        const { sessionId } = request.payload
+        const next = archivedSessionIds.filter(id => id !== sessionId)
+        if (next.length !== archivedSessionIds.length) {
+          archivedSessionIds.length = 0
+          archivedSessionIds.push(...next)
+          emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
+        }
+        return ok(request, { archivedSessionIds: [...archivedSessionIds] })
+      },
     },
     agentPresets: {
       // Both trusts appear, because a surface must present a locally authored
@@ -3162,6 +3172,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.unarchiveSession': return this.api.workspace.unarchiveSession(request)
       case 'workspace.createFederation': return this.api.workspace.createFederation(request)
       case 'workspace.listFederations': return this.api.workspace.listFederations(request)
       case 'workspace.renameFederation': return this.api.workspace.renameFederation(request)
