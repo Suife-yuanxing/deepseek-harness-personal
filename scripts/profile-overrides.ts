@@ -7,5 +7,6 @@
  */
 export const OVERRIDES: Readonly<Record<string, string>> = {
   '@deepseek-ai/dsh-client-ui-conversation': 'packages/client/ui-conversation',
+  '@deepseek-ai/dsh-client-ui-workspace': 'packages/client/ui-workspace',
   '@deepseek-ai/dsh-session-log-export': 'packages/session-query/session-log-export',
 }
