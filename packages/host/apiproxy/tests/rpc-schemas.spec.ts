@@ -22,6 +22,7 @@ import {
 import {
   federationViewSchema,
   workspaceArchiveSessionRequestSchema, workspaceArchiveSessionValueSchema,
+  workspaceUnarchiveSessionRequestSchema, workspaceUnarchiveSessionValueSchema,
   workspaceCreateFederationRequestSchema, workspaceCreateFederationValueSchema,
   workspaceCreateRequestSchema, workspaceCreateValueSchema, workspaceIdSchema,
   workspaceDeleteFederationValueSchema, workspaceDeleteRequestSchema, workspaceDeleteValueSchema,
@@ -404,6 +405,13 @@ describe('workspace domain schemas', () => {
     expect(workspaceArchiveSessionValueSchema.parse({ archivedSessionIds: ['s1', 's2'] }).archivedSessionIds)
       .toEqual(['s1', 's2'])
     expect(() => workspaceArchiveSessionValueSchema.parse({ archivedSessionIds: 's1' })).toThrow()
+  })
+
+  it('unarchiveSession mirrors archiveSession shapes', () => {
+    expect(workspaceUnarchiveSessionRequestSchema.parse({ sessionId: 's1' }).sessionId).toBe('s1')
+    expect(workspaceUnarchiveSessionValueSchema.parse({ archivedSessionIds: ['s2'] }).archivedSessionIds).toEqual(['s2'])
+    expect(() => workspaceUnarchiveSessionRequestSchema.parse({})).toThrow()
+    expect(() => workspaceUnarchiveSessionValueSchema.parse({ archivedSessionIds: 's2' })).toThrow()
   })
 
   it('insertSessionBefore accepts an anchored and an anchorless move', () => {

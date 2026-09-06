@@ -33,6 +33,7 @@ import {
 } from '../api/sessions.schema.ts'
 import {
   workspaceArchiveSessionValueSchema,
+  workspaceUnarchiveSessionValueSchema,
   workspaceCreateFederationValueSchema,
   workspaceCreateValueSchema,
   workspaceDeleteFederationValueSchema,
@@ -124,6 +125,7 @@ export interface IApiClient {
     insertBefore(payload: RequestPayload<'workspace.insertBefore'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.insertBefore'>>>
     insertSessionBefore(payload: RequestPayload<'workspace.insertSessionBefore'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.insertSessionBefore'>>>
     archiveSession(payload: RequestPayload<'workspace.archiveSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.archiveSession'>>>
+    unarchiveSession(payload: RequestPayload<'workspace.unarchiveSession'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.unarchiveSession'>>>
     createFederation(payload: RequestPayload<'workspace.createFederation'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.createFederation'>>>
     listFederations(payload: RequestPayload<'workspace.listFederations'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.listFederations'>>>
     renameFederation(payload: RequestPayload<'workspace.renameFederation'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'workspace.renameFederation'>>>
@@ -206,6 +208,7 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'workspace.insertBefore': workspaceInsertBeforeValueSchema,
   'workspace.insertSessionBefore': workspaceInsertSessionBeforeValueSchema,
   'workspace.archiveSession': workspaceArchiveSessionValueSchema,
+  'workspace.unarchiveSession': workspaceUnarchiveSessionValueSchema,
   'workspace.createFederation': workspaceCreateFederationValueSchema,
   'workspace.listFederations': workspaceListFederationsValueSchema,
   'workspace.renameFederation': workspaceRenameFederationValueSchema,
@@ -463,6 +466,7 @@ export abstract class AbstractApiClient implements IApiClient {
     insertBefore: (payload, signal) => this.callUnary('workspace.insertBefore', payload, signal),
     insertSessionBefore: (payload, signal) => this.callUnary('workspace.insertSessionBefore', payload, signal),
     archiveSession: (payload, signal) => this.callUnary('workspace.archiveSession', payload, signal),
+    unarchiveSession: (payload, signal) => this.callUnary('workspace.unarchiveSession', payload, signal),
     createFederation: (payload, signal) => this.callUnary('workspace.createFederation', payload, signal),
     listFederations: (payload, signal) => this.callUnary('workspace.listFederations', payload, signal),
     renameFederation: (payload, signal) => this.callUnary('workspace.renameFederation', payload, signal),

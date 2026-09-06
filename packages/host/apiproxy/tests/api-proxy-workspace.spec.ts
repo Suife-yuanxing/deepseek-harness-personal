@@ -571,6 +571,38 @@ describe('Host Workspace increments', () => {
     })
     abort.abort()
   })
+
+  it('unarchives a session, streams the set once, and is idempotent for ghosts', async () => {
+    const { api, root } = await harness()
+    const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'unarchive-home') }))).workspace
+    const sessionId = SessionId('session-to-unarchive')
+    expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId })))
+    expectOk(await api.workspace.archiveSession(request({ sessionId })))
+
+    const abort = new AbortController()
+    const stream: AsyncIterator<RpcRequest<HostFrame>> =
+      api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
+    const changed = nextHostFrame(stream)
+    expect(expectOk(await api.workspace.unarchiveSession(request({ sessionId }))).archivedSessionIds)
+      .toEqual([])
+    expect(await changed).toMatchObject({
+      payload: { type: 'host/archived-sessions-changed', archivedSessionIds: [] },
+    })
+
+    // Accounting and the session itself are untouched.
+    const listed = expectOk(await api.workspace.list(request({})))
+    expect(listed.archivedSessionIds).toEqual([])
+    expect(listed.items[0]?.sessionIds).toEqual([sessionId])
+    expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).toContain(sessionId)
+
+    // Ghost / never-archived ids are an idempotent success and emit no frame.
+    const after = nextHostFrame(stream)
+    expect(expectOk(await api.workspace.unarchiveSession(request({ sessionId: SessionId('session-ghost') }))).archivedSessionIds)
+      .toEqual([])
+    expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId: SessionId('session-after-unarchive') })))
+    expect((await after).payload.type).not.toBe('host/archived-sessions-changed')
+    abort.abort()
+  })
 })
 
 describe('workspace federation handlers', () => {

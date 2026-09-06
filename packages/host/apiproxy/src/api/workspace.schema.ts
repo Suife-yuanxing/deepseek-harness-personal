@@ -117,6 +117,16 @@ export const workspaceArchiveSessionValueSchema = z.object({
   archivedSessionIds: z.array(sessionIdSchema),
 }) satisfies z.ZodType<Wire<ResponseValue<'workspace.archiveSession'>>>
 
+/** workspace.unarchiveSession request payload. */
+export const workspaceUnarchiveSessionRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+}) satisfies z.ZodType<Wire<RequestPayload<'workspace.unarchiveSession'>>>
+
+/** workspace.unarchiveSession response value: the full updated archive set. */
+export const workspaceUnarchiveSessionValueSchema = z.object({
+  archivedSessionIds: z.array(sessionIdSchema),
+}) satisfies z.ZodType<Wire<ResponseValue<'workspace.unarchiveSession'>>>
+
 /** workspace.createFederation request payload (title omitted = joined basenames). */
 export const workspaceCreateFederationRequestSchema = z.object({
   title: z.string().optional(),

@@ -36,6 +36,7 @@ import {
 } from '../api/host.schema.ts'
 import {
   workspaceArchiveSessionRequestSchema,
+  workspaceUnarchiveSessionRequestSchema,
   workspaceCreateFederationRequestSchema,
   workspaceCreateRequestSchema,
   workspaceDeleteFederationRequestSchema,
@@ -120,6 +121,7 @@ const UNARY_ROUTES: UnaryRoutes = {
   'workspace.insertBefore': { schema: workspaceInsertBeforeRequestSchema, invoke: (api, r) => api.workspace.insertBefore(r) },
   'workspace.insertSessionBefore': { schema: workspaceInsertSessionBeforeRequestSchema, invoke: (api, r) => api.workspace.insertSessionBefore(r) },
   'workspace.archiveSession': { schema: workspaceArchiveSessionRequestSchema, invoke: (api, r) => api.workspace.archiveSession(r) },
+  'workspace.unarchiveSession': { schema: workspaceUnarchiveSessionRequestSchema, invoke: (api, r) => api.workspace.unarchiveSession(r) },
   'workspace.createFederation': { schema: workspaceCreateFederationRequestSchema, invoke: (api, r) => api.workspace.createFederation(r) },
   'workspace.listFederations': { schema: workspaceListFederationsRequestSchema, invoke: (api, r) => api.workspace.listFederations(r) },
   'workspace.renameFederation': { schema: workspaceRenameFederationRequestSchema, invoke: (api, r) => api.workspace.renameFederation(r) },

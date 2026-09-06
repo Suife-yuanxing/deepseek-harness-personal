@@ -3166,6 +3166,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
       },
 
+      async unarchiveSession(request) {
+        const { sessionId } = request.payload
+        // Idempotent by contract: a non-archived or unknown id is a no-op
+        // success (ghost cleanup), so only storage faults propagate.
+        await ctx.workspaceRegistry.unarchiveSession(sessionId)
+        return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
+      },
+
       async createFederation(request) {
         const { payload } = request
         // The gray switch gates CREATION ONLY, and this is its other creation

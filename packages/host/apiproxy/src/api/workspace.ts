@@ -147,6 +147,16 @@ export interface WorkspaceApi {
   Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
 
   /**
+   * Removes one session from the registry-global archive set: the session
+   * rejoins every grouping surface through the accounting slot archiving
+   * preserved. Idempotent for a non-archived or unknown id (purged ghost
+   * cleanup is a legitimate unarchive). Returns the full updated set (same
+   * snapshot the changed frame carries).
+   */
+  unarchiveSession(request: RpcRequest<{ sessionId: SessionId }>):
+  Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
+
+  /**
    * Creates a federation over two or more existing directories. Every member
    * canonicalizes to an existing directory, pairwise distinct after
    * canonicalization; violations fail with `federation-invalid-members`. The
