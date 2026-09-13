@@ -10,13 +10,22 @@
       "path": "../../../vendor/cordis"
     },
     {
+      "path": "../../code-runtime/code-runtime"
+    },
+    {
       "path": "../../core/agent"
+    },
+    {
+      "path": "../../core/tools"
     },
     {
       "path": "../../credentials/credentials"
     },
     {
       "path": "../../interaction/user-approval"
+    },
+    {
+      "path": "../../interaction/commands"
     },
     {
       "path": "../../runtime-diagnostics/invariants"
