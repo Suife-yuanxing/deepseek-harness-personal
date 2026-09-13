@@ -283,3 +283,75 @@ describe('secscan-policy (block)', () => {
     expect(rec.action).toBe('blocked')
   })
 })
+
+describe('secscan-policy (settings + event)', () => {
+  /** Minimal settings provider: base-layer scopes with mutable values and watcher lists. */
+  function provideSettings(ctx: Context): { registered: string[]; setField(field: string, value: unknown): void } {
+    const registered: string[] = []
+    const scopes = new Map<string, { value: Record<string, unknown>; watchers: Array<() => void> }>()
+    ;(ctx as unknown as { provide(key: string, value: unknown): void }).provide('settings', {
+      register: (ns: string, _schema: unknown, opts: { base?: Record<string, unknown> }) => {
+        registered.push(ns)
+        const scope = { value: { ...(opts?.base ?? {}) }, watchers: [] as Array<() => void> }
+        scopes.set(ns, scope)
+        return {
+          get: () => scope.value,
+          watch: (cb: () => void): void => { scope.watchers.push(cb) },
+        }
+      },
+    })
+    return {
+      registered,
+      setField: (field, value) => {
+        for (const scope of scopes.values()) {
+          scope.value[field] = value
+          for (const w of scope.watchers) w()
+        }
+      },
+    }
+  }
+
+  it('registers the secscan namespace and applies mode changes live', async () => {
+    const adapter = new MockAdapter([textResponse('ok'), textResponse('ok')])
+    const ctx = await harness(adapter)
+    const settings = provideSettings(ctx)
+    const file = tempAudit()
+    await ctx.plugin(SecscanPolicy, { mode: 'monitor', auditFile: file })
+    expect(settings.registered).toContain('secscan')
+    const agent = ctx.agentLoop.create(SessionId('live-mode'), { provider: 'mock', model: 'mock' })
+    send(agent, LEAKY) // monitor: passes
+    await waitForIdle(ctx, agent)
+    expect(adapter.requests).toHaveLength(1)
+    settings.setField('mode', 'block') // the settings page writes the user layer
+    send(agent, LEAKY) // now blocked
+    await waitForIdle(ctx, agent)
+    expect(adapter.requests).toHaveLength(1)
+    const recs = readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { action?: string; kind?: string })
+    expect(recs.some(r => r.action === 'pass')).toBe(true)
+    expect(recs.some(r => r.action === 'blocked')).toBe(true)
+  })
+
+  it('emits secscan/findings with summarized findings only (no text)', async () => {
+    const file = tempAudit()
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    const emitted: Array<{ event: string; payload: unknown }> = []
+    const origin = (ctx as unknown as { emit: (event: string, payload: unknown) => void }).emit.bind(ctx)
+    ;(ctx as unknown as { emit: (event: string, payload: unknown) => void }).emit = (event, payload) => {
+      emitted.push({ event, payload })
+      origin(event, payload)
+    }
+    await ctx.plugin(SecscanPolicy, { mode: 'monitor', auditFile: file })
+    const agent = ctx.agentLoop.create(SessionId('push'), { provider: 'mock', model: 'mock' })
+    send(agent, LEAKY)
+    await waitForIdle(ctx, agent)
+    const hit = emitted.find(e => e.event === 'secscan/findings')
+    expect(hit).toBeDefined()
+    const payload = hit!.payload as { sessionId: string; mode: string; action: string; findings: Array<{ sampleLast4: string }> }
+    expect(payload.sessionId).toBe(agent.id)
+    expect(payload.mode).toBe('monitor')
+    expect(payload.action).toBe('pass')
+    expect(payload.findings.some(f => f.sampleLast4 === '9Jkl')).toBe(true)
+    expect(JSON.stringify(payload)).not.toContain('sk-test-Abc123')
+  })
+})

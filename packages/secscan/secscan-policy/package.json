@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-secscan-policy",
-  "description": "Egress secret-scan policy: scans each pre-step message batch; modes off|monitor|redact|block (block asks through the approval seam)",
+  "description": "Egress secret-scan policy: scans each pre-step message batch; modes off|monitor|redact|block (block asks through the approval seam); findings push and a settings namespace ride the same wire face",
   "version": "0.1.0",
   "publishConfig": {
     "access": "public"
@@ -18,13 +18,22 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./types": {
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
+    "lib/types.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-settings": "workspace:^",
+    "@deepseek-ai/schemastery": "workspace:^"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-agent": "workspace:^",

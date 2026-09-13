@@ -13,6 +13,8 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import {
   buildKnownCredentials, redactText, scan,
   type Finding, type KnownCredential, type ScanOptions,
@@ -27,14 +29,14 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { createAudit, type Audit } from './audit.js'
+import { SECSCAN_MODES, type Mode, type SecscanAction, type SecscanFindingSummary, type SecscanFindingsEvent } from './types.js'
+
+export { SECSCAN_MODES, type Mode, type SecscanAction, type SecscanFindingSummary, type SecscanFindingsEvent } from './types.js'
 
 export const name = 'secscan-policy'
 
 /** Services this policy reads; the credentials provider is always composed in dsh-base. */
 export const inject = ['credentials']
-
-const MODES = ['off', 'monitor', 'redact', 'block'] as const
-export type Mode = (typeof MODES)[number]
 
 /** Plugin config; every key optional with the defaults shown. */
 export interface Config {
@@ -51,6 +53,16 @@ export interface Config {
   /** Test-only injection: make the engine throw to prove the fail-open path. */
   failScan?: boolean
 }
+
+/** Durable settings section (`secscan` namespace); also validates the composition entry. */
+export const Config: z<Config> = z.object({
+  mode: z.union([...SECSCAN_MODES]).default('monitor'),
+  ignoreRuleIds: z.array(z.string()).default([]),
+  auditFile: z.string(),
+  maxBytes: z.number(),
+  maxAudit: z.number(),
+  failScan: z.boolean(),
+})
 
 interface TextBlock {
   type: string
@@ -144,19 +156,24 @@ function summarizeForReason(findings: ReadonlyArray<Finding>): string {
   return `出口扫描发现 ${findings.length} 处疑似敏感内容（${parts.join('、')}${more}）；放行将原样发送，拒绝将中止本轮`
 }
 
-/** Register the pre-step egress gate. Mounts nothing in `off` mode. */
+/**
+ * Register the pre-step egress gate. The `secscan` settings namespace is
+ * installed even in `off` mode so the settings page can switch the policy on
+ * later; `source()` always points at the resolved scope (composition entry as
+ * the base layer, the user-settings document on top) and is re-read per fire,
+ * so mode and ignore-list changes apply without a remount.
+ */
 export function apply(ctx: Context, config: Config = {}): void {
-  const mode = config.mode ?? 'monitor'
-  if (!(MODES as readonly string[]).includes(mode)) {
-    throw new Error(`secscan-policy: unknown mode "${String(mode)}" (off|monitor|redact|block)`)
-  }
-  if (mode === 'off') return
-
-  const current: { mode: Mode; ignoreRuleIds: string[]; maxBytes?: number } = {
-    mode,
+  const entry: Config = {
+    ...config,
+    mode: config.mode ?? 'monitor',
     ignoreRuleIds: config.ignoreRuleIds ?? [],
-    ...(config.maxBytes === undefined ? {} : { maxBytes: config.maxBytes }),
   }
+  let source: () => Config = () => entry
+  installSettingsSection(ctx, settingsNamespace('secscan'), Config, entry, {
+    setSource: (resolved) => { source = resolved },
+    onChange: () => {}, // listeners re-read source(); nothing to re-mount
+  })
 
   const audit: Audit = createAudit({
     file: config.auditFile ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'secscan', 'audit.jsonl'),
@@ -177,8 +194,28 @@ export function apply(ctx: Context, config: Config = {}): void {
     knownReady = refreshKnown()
   })
 
+  /** Push a JSON-safe summary to connected clients; best-effort, never fatal. */
+  const notify = (agentId: string, action: SecscanAction, findings: SecscanFindingSummary[]): void => {
+    if (findings.length === 0) return
+    try {
+      ctx.emit('secscan/findings', {
+        sessionId: agentId,
+        mode: source().mode ?? 'monitor',
+        action,
+        findings,
+        at: Date.now(),
+      } satisfies SecscanFindingsEvent)
+    } catch {
+      // notification is decoration; a scan decision never depends on it
+    }
+  }
+
   ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
     await knownReady
+    const cfg = source()
+    const mode = cfg.mode ?? 'monitor'
+    if (mode === 'off') return next()
+    const ignoreRuleIds = cfg.ignoreRuleIds ?? []
     let batch: ReturnType<typeof scanBatch>
     try {
       batch = config.failScan
@@ -188,29 +225,33 @@ export function apply(ctx: Context, config: Config = {}): void {
         : scanBatch(messages, {
           known,
           entropy: true,
-          ...(current.ignoreRuleIds.length > 0 ? { ignoreRuleIds: current.ignoreRuleIds } : {}),
-          ...(current.maxBytes === undefined ? {} : { maxBytes: current.maxBytes }),
+          ...(ignoreRuleIds.length > 0 ? { ignoreRuleIds } : {}),
+          ...(cfg.maxBytes === undefined ? {} : { maxBytes: cfg.maxBytes }),
         })
     } catch {
-      await audit.record({ egress: 'pre-step', mode: current.mode, kind: 'scan-error' })
+      await audit.record({ egress: 'pre-step', mode, kind: 'scan-error' })
       // monitor/redact fail open: a broken engine must not break the loop.
       // block fails closed: a broken engine must not disable the only gate.
-      return current.mode === 'block' ? { kind: 'reject' } : next()
+      return mode === 'block' ? { kind: 'reject' } : next()
     }
     if (batch.all.length === 0) return next()
     const actionable = batch.all.some(f => f.severity !== 'info')
-    if (current.mode === 'monitor' || !actionable) {
+    if (mode === 'monitor' || !actionable) {
+      const findings = summarize(batch.all)
       await audit.record({
-        egress: 'pre-step', mode: current.mode, action: 'pass',
-        findings: summarize(batch.all), truncated: batch.truncated,
+        egress: 'pre-step', mode, action: 'pass',
+        findings, truncated: batch.truncated,
       })
+      notify(agent.id, 'pass', findings)
       return next() // monitor: observe only; info-only findings never trigger any action
     }
-    if (current.mode === 'redact') {
+    if (mode === 'redact') {
+      const findings = summarize(batch.all)
       await audit.record({
-        egress: 'pre-step', mode: current.mode, action: 'redact',
-        findings: summarize(batch.all), truncated: batch.truncated,
+        egress: 'pre-step', mode, action: 'redact',
+        findings, truncated: batch.truncated,
       })
+      notify(agent.id, 'redact', findings)
       return { kind: 'enter', messages: rewriteBatch(messages, batch.blocks) }
     }
     // block: ask through the approval seam. toolName is a synthetic label (the
@@ -230,11 +271,13 @@ export function apply(ctx: Context, config: Config = {}): void {
     } catch {
       outcome = 'unavailable' // outside an open turn, or a failing audit append
     }
+    const action: SecscanAction = outcome === 'allowed-once' ? 'allowed' : 'blocked'
+    const findings = summarize(batch.all)
     await audit.record({
-      egress: 'pre-step', mode: current.mode,
-      action: outcome === 'allowed-once' ? 'allowed' : 'blocked',
-      findings: summarize(batch.all), truncated: batch.truncated,
+      egress: 'pre-step', mode, action,
+      findings, truncated: batch.truncated,
     })
+    notify(agent.id, action, findings)
     return outcome === 'allowed-once' ? next() : { kind: 'reject' }
   })
 }
