@@ -45,6 +45,9 @@
       "path": "../../preset/agent-presets"
     },
     {
+      "path": "../../secscan/secscan-policy"
+    },
+    {
       "path": "../../core/session"
     },
     {
