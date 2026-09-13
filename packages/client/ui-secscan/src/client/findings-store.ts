@@ -1,8 +1,9 @@
 /**
  * Findings-strip store: holds the latest `secscan/findings` push. The plugin's
  * apply-world `$on` listener is the only writer besides the dismiss action.
+ * Uses the vendored mini store engine (no runtime import).
  */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
+import { createMiniStore, type MiniStoreHandle } from './mini-store.ts'
 import type { SecscanFindingsEvent } from './secscan-settings.ts'
 
 /** Store state for the per-session findings strip. */
@@ -17,11 +18,11 @@ export interface FindingsState {
  * Declares the findings-strip state and write surface.
  * @returns the store handle.
  */
-export function createFindingsStore(): EngineStoreHandle<FindingsState, {
+export function createFindingsStore(): MiniStoreHandle<FindingsState, {
   sync: (draft: FindingsState, event: SecscanFindingsEvent) => void
   dismiss: (draft: FindingsState, at: number) => void
 }> {
-  return defineStore({
+  return createMiniStore({
     init: (): FindingsState => ({ event: null, dismissedAt: -1 }),
     actions: {
       sync: (d, event: SecscanFindingsEvent) => {

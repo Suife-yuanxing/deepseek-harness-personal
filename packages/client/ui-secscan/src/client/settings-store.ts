@@ -1,9 +1,9 @@
 /**
  * Settings-row store: a mirror of the `secscan` settings scope. The plugin's
  * apply-world adoption listener is the only writer; row components read via
- * props.useStore.
+ * props.useStore. Uses the vendored mini store engine (no runtime import).
  */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
+import { createMiniStore, type MiniStoreHandle, type MiniStoreInstance } from './mini-store.ts'
 import type { SecscanMode } from './secscan-settings.ts'
 
 /** Store state mirrored from the settings scope snapshot. */
@@ -20,10 +20,10 @@ export interface SecscanRowState {
  * Declares the settings-row state and write surface.
  * @returns the store handle.
  */
-export function createSecscanRowStore(): EngineStoreHandle<SecscanRowState, {
+export function createSecscanRowStore(): MiniStoreHandle<SecscanRowState, {
   sync: (draft: SecscanRowState, mode: SecscanMode, ignoreRuleIds: string[], revision: number) => void
 }> {
-  return defineStore({
+  return createMiniStore({
     init: (): SecscanRowState => ({ mode: 'monitor', ignoreRuleIds: [], revision: -1 }),
     actions: {
       sync: (d, mode: SecscanMode, ignoreRuleIds: string[], revision: number) => {
@@ -35,3 +35,5 @@ export function createSecscanRowStore(): EngineStoreHandle<SecscanRowState, {
     },
   })
 }
+
+export type { MiniStoreInstance }
