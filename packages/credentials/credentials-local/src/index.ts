@@ -374,6 +374,35 @@ export class LocalCredentialProvider extends CredentialProvider {
     return Promise.resolve({ configured: false, writable: true })
   }
 
+  /** Name shape that marks an ambient `.env` entry as credential-shaped. */
+  private static readonly CREDENTIAL_NAME = /(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|ACCESS_?KEY|CRED(?:ENTIAL)?)/i
+
+  /**
+   * Enumerate every credential value this provider can supply from its
+   * enumerable layers — the managed document plus the `.env` fallbacks — with
+   * the winning layer per name. The inherited process environment is NOT
+   * enumerated: ambient variables are not credential names, so an env-supplied
+   * credential is outside this surface by design. A `.env` entry counts only
+   * when its name is credential-shaped. Values are for in-process callers
+   * only; callers must never persist or transmit them.
+   */
+  async resolveAll(): Promise<Array<{ ref: string; source: string; value: string }>> {
+    const out: Array<{ ref: string; source: string; value: string }> = []
+    const shadowed = new Set<string>()
+    for (const [ref, value] of this.values) {
+      out.push({ ref, source: 'file', value })
+      shadowed.add(ref)
+    }
+    for (const entry of launchEnvironmentOf(this.ctx).entriesFrom(['project-env', 'user-env'])) {
+      if (entry.value.length === 0) continue
+      if (shadowed.has(entry.name)) continue
+      if (!LocalCredentialProvider.CREDENTIAL_NAME.test(entry.name)) continue
+      out.push({ ref: entry.name, source: entry.source, value: entry.value })
+      shadowed.add(entry.name)
+    }
+    return out
+  }
+
   override async set(ref: CredentialRef, value: string): Promise<void> {
     if (value.length === 0) {
       throw new Error(`credentials-local: an empty value cannot be stored for "${ref}"; use unset`)

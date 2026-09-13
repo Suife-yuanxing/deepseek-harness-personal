@@ -49,6 +49,14 @@ export interface LaunchEnvironmentSnapshot {
    * @returns the first matching entry, or `undefined`.
    */
   getFrom(name: string, sources: readonly LaunchEnvironmentSource[]): LaunchEnvironmentEntry | undefined
+  /**
+   * Enumerate every name the requested layers supply, folded by canonical
+   * trust order: per name the most trusted requested layer wins, and the name
+   * returns as written in its supplying layer.
+   * @param sources - the layers allowed in the canonical trust order.
+   * @returns one entry per supplied name, ordered most-trusted layer first.
+   */
+  entriesFrom(sources: readonly LaunchEnvironmentSource[]): Array<LaunchEnvironmentEntry & { name: string }>
 }
 
 /**
@@ -78,11 +86,11 @@ export interface LaunchEnvironmentLayerInput {
 export function createLaunchEnvironmentSnapshot(layers: readonly LaunchEnvironmentLayerInput[]): LaunchEnvironmentSnapshot {
   // Copy every layer so later mutations cannot change the snapshot. Fold names
   // on Windows so case variants cannot split precedence; POSIX remains exact.
-  const bySource = new Map<LaunchEnvironmentSource, { path?: string; values: Map<string, string> }>()
+  const bySource = new Map<LaunchEnvironmentSource, { path?: string; values: Map<string, { name: string; value: string }> }>()
   for (const layer of layers) {
     bySource.set(layer.source, {
       ...layer.path === undefined ? {} : { path: layer.path },
-      values: new Map(Object.entries(layer.values).map(([name, value]) => [lookupKey(name), value])),
+      values: new Map(Object.entries(layer.values).map(([name, value]) => [lookupKey(name), { name, value }])),
     })
   }
   const getFrom = (name: string, sources: readonly LaunchEnvironmentSource[]): LaunchEnvironmentEntry | undefined => {
@@ -90,15 +98,29 @@ export function createLaunchEnvironmentSnapshot(layers: readonly LaunchEnvironme
     for (const source of SOURCE_ORDER) {
       if (!sources.includes(source)) continue
       const layer = bySource.get(source)
-      const value = layer?.values.get(key)
-      if (value === undefined) continue
-      return { value, source, ...layer?.path === undefined ? {} : { path: layer.path } }
+      const entry = layer?.values.get(key)
+      if (entry === undefined) continue
+      return { value: entry.value, source, ...layer?.path === undefined ? {} : { path: layer.path } }
     }
     return undefined
+  }
+  const entriesFrom = (sources: readonly LaunchEnvironmentSource[]): Array<LaunchEnvironmentEntry & { name: string }> => {
+    const winners = new Map<string, LaunchEnvironmentEntry & { name: string }>()
+    for (const source of SOURCE_ORDER) {
+      if (!sources.includes(source)) continue
+      const layer = bySource.get(source)
+      if (layer === undefined) continue
+      for (const [key, entry] of layer.values) {
+        if (winners.has(key)) continue // a more trusted requested layer already supplied this name
+        winners.set(key, { name: entry.name, value: entry.value, source, ...layer.path === undefined ? {} : { path: layer.path } })
+      }
+    }
+    return [...winners.values()]
   }
   return {
     get: name => getFrom(name, SOURCE_ORDER),
     getFrom,
+    entriesFrom,
   }
 }
 
