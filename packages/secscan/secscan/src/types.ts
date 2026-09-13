@@ -44,4 +44,6 @@ export interface ScanOptions {
   maxBytes?: number
   /** Entropy pass toggle. Findings are always `info` and never acted on. Default true. */
   entropy?: boolean
+  /** Findings with these ruleIds are dropped before the report is built. */
+  ignoreRuleIds?: string[]
 }

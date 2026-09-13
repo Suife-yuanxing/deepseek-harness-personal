@@ -54,4 +54,14 @@ describe('scan', () => {
   it('clean text yields empty findings', () => {
     expect(scan({ kind: 'text', content: 'hello world' }).findings).toHaveLength(0)
   })
+
+  it('drops findings whose ruleId is ignored', () => {
+    const report = scan({ kind: 'text', content: 'key sk-test-000000000000000000000000 ok' }, { ignoreRuleIds: ['generic-sk-token'] })
+    expect(report.findings.some(f => f.ruleId === 'generic-sk-token')).toBe(false)
+  })
+
+  it('keeps other rules when one is ignored', () => {
+    const report = scan({ kind: 'text', content: 'key sk-test-000000000000000000000000 ok' }, { ignoreRuleIds: ['high-entropy'] })
+    expect(report.findings.some(f => f.ruleId === 'generic-sk-token')).toBe(true)
+  })
 })

@@ -31,5 +31,9 @@ export function scan(input: ScanInput, options: ScanOptions = {}): ScanReport {
   const findings: Finding[] = [...scanRules(content)]
   if (options.entropy !== false) findings.push(...scanEntropy(content))
   if (options.known?.length) findings.push(...scanKnownCredentials(content, options.known))
-  return { findings: dedupe(findings), truncated, durationMs: performance.now() - started }
+  const merged = dedupe(findings)
+  const kept = options.ignoreRuleIds === undefined || options.ignoreRuleIds.length === 0
+    ? merged
+    : merged.filter(f => !options.ignoreRuleIds?.includes(f.ruleId))
+  return { findings: kept, truncated, durationMs: performance.now() - started }
 }
