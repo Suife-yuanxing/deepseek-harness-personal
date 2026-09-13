@@ -142,7 +142,7 @@ describe('secscan-policy (modes)', () => {
     ;(ctx as unknown as { provide(key: string, value: unknown): void }).provide('credentials', {
       resolveAll: async () => [],
     })
-    await expect(ctx.plugin(SecscanPolicy, { mode: 'redact', auditFile: tempAudit() })).rejects.toThrow(/redact/)
-    await expect(ctx.plugin(SecscanPolicy, { mode: 'block', auditFile: tempAudit() })).rejects.toThrow(/block/)
+    await expect(ctx.plugin(SecscanPolicy, { mode: 'redact', auditFile: tempAudit() } as unknown as Record<string, unknown>)).rejects.toThrow(/redact/)
+    await expect(ctx.plugin(SecscanPolicy, { mode: 'block', auditFile: tempAudit() } as unknown as Record<string, unknown>)).rejects.toThrow(/block/)
   })
 })

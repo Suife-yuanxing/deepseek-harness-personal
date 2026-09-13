@@ -94,7 +94,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const audit: Audit = createAudit({
     file: config.auditFile ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'secscan', 'audit.jsonl'),
-    max: config.maxAudit,
+    ...(config.maxAudit === undefined ? {} : { max: config.maxAudit }),
   })
 
   let known: KnownCredential[] = []
@@ -121,7 +121,14 @@ export function apply(ctx: Context, config: Config = {}): void {
         ? (() => {
           throw new Error('injected scan failure')
         })()
-        : scan({ kind: 'text', content: text }, { known, maxBytes: config.maxBytes, entropy: true })
+        : scan(
+          { kind: 'text', content: text },
+          {
+            known,
+            entropy: true,
+            ...(config.maxBytes === undefined ? {} : { maxBytes: config.maxBytes }),
+          },
+        )
     } catch {
       await audit.record({ egress: 'pre-step', mode, kind: 'scan-error' })
       return next() // fail-open in monitor: a broken engine must not break the loop

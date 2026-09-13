@@ -1,6 +1,6 @@
-import type { Finding } from './types.js'
+import type { Finding, Severity } from './types.js'
 
-const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, info: 3 }
+const SEVERITY_ORDER: Record<Severity, number> = { critical: 0, high: 1, medium: 2, info: 3 }
 
 /**
  * Replace finding spans with `⟨REDACTED:<type>:…<last4⟩>` placeholders.

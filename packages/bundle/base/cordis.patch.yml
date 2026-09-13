@@ -85,6 +85,14 @@
     - id: credentials
       name: '@deepseek-ai/dsh-credentials-local'
 
+    # Egress secret-scan gate: scans each newly submitted message batch before
+    # it leaves the machine toward a model API. Monitor by default — findings
+    # land in the local audit, nothing blocks or rewrites; `mode: off` unmounts.
+    - id: secscan-policy
+      name: '@deepseek-ai/dsh-secscan-policy'
+      config:
+        mode: monitor
+
     # The pi-ai multi-provider twin, mounted dormant: zero routes (and no extra
     # models in the picker) until a `llm-pi-ai:` settings section supplies provider
     # profiles — then those routes register live, keys resolving per request
