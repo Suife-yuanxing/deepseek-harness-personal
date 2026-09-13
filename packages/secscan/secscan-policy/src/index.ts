@@ -1,9 +1,11 @@
 /**
  * Egress secret-scan policy. Subscribes `agent/pre-step` and scans the text of
  * each newly submitted message batch before it can leave the machine toward a
- * model API. P1 ships `off | monitor`: monitor records summarized findings to
- * a local audit and never blocks or rewrites. Engine failures fail open here
- * (monitor must not break the loop); the fingerprint source is the local
+ * model API. P2 ships `off | monitor | redact | block`: monitor records
+ * summarized findings to a local audit and never blocks or rewrites; redact
+ * rewrites sensitive spans and enters the step with the redacted batch; block
+ * fails closed pending the approval ask. Engine failures fail open in
+ * monitor/redact and closed in block; the fingerprint source is the local
  * credentials provider's `resolveAll()` when it offers one.
  *
  * @module @deepseek-ai/dsh-secscan-policy
@@ -11,8 +13,12 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
-import { buildKnownCredentials, scan, type KnownCredential } from '@deepseek-ai/dsh-secscan'
+import {
+  buildKnownCredentials, redactText, scan,
+  type Finding, type KnownCredential, type ScanOptions,
+} from '@deepseek-ai/dsh-secscan'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { UserMessage } from '@deepseek-ai/dsh-session'
 // Type-only side effects: the canonical event augmentations these listeners
 // program against. No runtime dependency on either package.
 import type {} from '@deepseek-ai/dsh-agent'
@@ -24,13 +30,15 @@ export const name = 'secscan-policy'
 /** Services this policy reads; the credentials provider is always composed in dsh-base. */
 export const inject = ['credentials']
 
-const MODES = ['off', 'monitor'] as const
+const MODES = ['off', 'monitor', 'redact', 'block'] as const
 export type Mode = (typeof MODES)[number]
 
 /** Plugin config; every key optional with the defaults shown. */
 export interface Config {
-  /** Policy mode; defaults to `monitor`. `redact`/`block` are rejected until P2. */
+  /** Policy mode; defaults to `monitor`. */
   mode?: Mode
+  /** Findings with these ruleIds are dropped before any action (settings-editable). */
+  ignoreRuleIds?: string[]
   /** Audit file override; defaults to `<dsh home>/secscan/audit.jsonl`. */
   auditFile?: string
   /** Per-batch scan ceiling in UTF-16 code units; defaults to the engine's 1 MB. */
@@ -60,22 +68,64 @@ interface CredentialsWithEnumeration {
   resolveAll?: () => Promise<ResolvedCredentialValue[]>
 }
 
-/** Text of every text block in the batch, newline-joined. */
-function extractText(messages: ReadonlyArray<BatchMessage>): string {
-  const parts: string[] = []
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block.type === 'text' && block.text) parts.push(block.text)
-    }
+/** One scanned text block with its block-relative findings. */
+interface ScannedBlock {
+  messageIndex: number
+  blockIndex: number
+  findings: Finding[]
+}
+
+/** Scan every text block separately; findings stay block-relative so redaction can rewrite them. */
+function scanBatch(
+  messages: ReadonlyArray<BatchMessage>,
+  options: ScanOptions,
+): { blocks: ScannedBlock[]; all: Finding[]; truncated: boolean } {
+  const blocks: ScannedBlock[] = []
+  const all: Finding[] = []
+  let truncated = false
+  messages.forEach((message, messageIndex) => {
+    message.content.forEach((block, blockIndex) => {
+      if (block.type !== 'text' || !block.text) return
+      const report = scan({ kind: 'text', content: block.text }, options)
+      truncated = truncated || report.truncated
+      if (report.findings.length === 0) return
+      blocks.push({ messageIndex, blockIndex, findings: report.findings })
+      all.push(...report.findings)
+    })
+  })
+  return { blocks, all, truncated }
+}
+
+/** Rewrite the flagged text blocks; untouched blocks keep object identity. */
+function rewriteBatch(messages: readonly UserMessage[], blocks: ScannedBlock[]): UserMessage[] {
+  const byMessage = new Map<number, ScannedBlock[]>()
+  for (const b of blocks) {
+    const list = byMessage.get(b.messageIndex) ?? []
+    list.push(b)
+    byMessage.set(b.messageIndex, list)
   }
-  return parts.join('\n')
+  return messages.map((message, messageIndex) => {
+    const flagged = byMessage.get(messageIndex)
+    if (flagged === undefined) return message
+    const content = message.content.map((block, blockIndex) => {
+      const hit = flagged.find(b => b.blockIndex === blockIndex)
+      if (hit === undefined || block.type !== 'text') return block
+      const rewritten = redactText(block.text, hit.findings)
+      return rewritten === block.text ? block : { ...block, text: rewritten }
+    })
+    return { ...message, content }
+  })
 }
 
 /** Audit-safe finding projection: ruleId/type/severity/last4, never the text. */
-function summarize(report: {
-  findings: ReadonlyArray<{ ruleId: string; type: string; severity: string; sampleLast4: string; source?: string }>
-}): Array<{ ruleId: string; type: string; severity: string; sampleLast4: string; source?: string }> {
-  return report.findings.map(f => ({
+function summarize(findings: ReadonlyArray<Finding>): Array<{
+  ruleId: string
+  type: string
+  severity: string
+  sampleLast4: string
+  source?: string
+}> {
+  return findings.map(f => ({
     ruleId: f.ruleId,
     type: f.type,
     severity: f.severity,
@@ -88,9 +138,15 @@ function summarize(report: {
 export function apply(ctx: Context, config: Config = {}): void {
   const mode = config.mode ?? 'monitor'
   if (!(MODES as readonly string[]).includes(mode)) {
-    throw new Error(`secscan-policy: mode "${mode}" is not available yet (off|monitor); redact/block land in P2`)
+    throw new Error(`secscan-policy: unknown mode "${String(mode)}" (off|monitor|redact|block)`)
   }
   if (mode === 'off') return
+
+  const current: { mode: Mode; ignoreRuleIds: string[]; maxBytes?: number } = {
+    mode,
+    ignoreRuleIds: config.ignoreRuleIds ?? [],
+    ...(config.maxBytes === undefined ? {} : { maxBytes: config.maxBytes }),
+  }
 
   const audit: Audit = createAudit({
     file: config.auditFile ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'secscan', 'audit.jsonl'),
@@ -113,31 +169,45 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   ctx.on('agent/pre-step', async ({ messages }, next): Promise<PreStepDecision> => {
     await knownReady
-    let report
+    let batch: ReturnType<typeof scanBatch>
     try {
-      const text = extractText(messages)
-      if (!text) return next()
-      report = config.failScan
+      batch = config.failScan
         ? (() => {
           throw new Error('injected scan failure')
         })()
-        : scan(
-          { kind: 'text', content: text },
-          {
-            known,
-            entropy: true,
-            ...(config.maxBytes === undefined ? {} : { maxBytes: config.maxBytes }),
-          },
-        )
+        : scanBatch(messages, {
+          known,
+          entropy: true,
+          ...(current.ignoreRuleIds.length > 0 ? { ignoreRuleIds: current.ignoreRuleIds } : {}),
+          ...(current.maxBytes === undefined ? {} : { maxBytes: current.maxBytes }),
+        })
     } catch {
-      await audit.record({ egress: 'pre-step', mode, kind: 'scan-error' })
-      return next() // fail-open in monitor: a broken engine must not break the loop
+      await audit.record({ egress: 'pre-step', mode: current.mode, kind: 'scan-error' })
+      // monitor/redact fail open: a broken engine must not break the loop.
+      // block fails closed: a broken engine must not disable the only gate.
+      return current.mode === 'block' ? { kind: 'reject' } : next()
     }
-    if (report.findings.length === 0) return next()
+    if (batch.all.length === 0) return next()
+    const actionable = batch.all.some(f => f.severity !== 'info')
+    if (current.mode === 'monitor' || !actionable) {
+      await audit.record({
+        egress: 'pre-step', mode: current.mode, action: 'pass',
+        findings: summarize(batch.all), truncated: batch.truncated,
+      })
+      return next() // monitor: observe only; info-only findings never trigger any action
+    }
+    if (current.mode === 'redact') {
+      await audit.record({
+        egress: 'pre-step', mode: current.mode, action: 'redact',
+        findings: summarize(batch.all), truncated: batch.truncated,
+      })
+      return { kind: 'enter', messages: rewriteBatch(messages, batch.blocks) }
+    }
+    // block: the approval ask lands in the next task; strictest interim posture.
     await audit.record({
-      egress: 'pre-step', mode, action: 'pass',
-      findings: summarize(report), truncated: report.truncated,
+      egress: 'pre-step', mode: current.mode, action: 'blocked',
+      findings: summarize(batch.all), truncated: batch.truncated,
     })
-    return next() // monitor: observe only
+    return { kind: 'reject' }
   })
 }

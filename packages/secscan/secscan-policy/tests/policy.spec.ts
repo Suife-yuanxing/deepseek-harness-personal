@@ -136,13 +136,65 @@ describe('secscan-policy (modes)', () => {
     expect(() => readFileSync(file)).toThrow()
   })
 
-  it('rejects redact/block at load time until P2', async () => {
-    // Inject resolution precedes apply: provide the service so the failure comes from the mode itself.
+  it('rejects an unknown mode at load time', async () => {
     const ctx = new Context()
     ;(ctx as unknown as { provide(key: string, value: unknown): void }).provide('credentials', {
       resolveAll: async () => [],
     })
-    await expect(ctx.plugin(SecscanPolicy, { mode: 'redact', auditFile: tempAudit() } as unknown as Record<string, unknown>)).rejects.toThrow(/redact/)
-    await expect(ctx.plugin(SecscanPolicy, { mode: 'block', auditFile: tempAudit() } as unknown as Record<string, unknown>)).rejects.toThrow(/block/)
+    await expect(ctx.plugin(SecscanPolicy, { mode: 'yolo', auditFile: tempAudit() } as unknown as Record<string, unknown>)).rejects.toThrow(/yolo/)
+  })
+})
+
+describe('secscan-policy (redact)', () => {
+  /** Flattened text the model actually received (post pre-step decision). */
+  function modelSeen(adapter: MockAdapter): string {
+    return adapter.requests[0]!.messages
+      .map(m => m.content.map(b => (b.type === 'text' ? b.text : '')).join(''))
+      .join('\n')
+  }
+
+  it('enters the step with sensitive spans rewritten and records a redact action', async () => {
+    const file = tempAudit()
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    await ctx.plugin(SecscanPolicy, { mode: 'redact', auditFile: file })
+    const agent = ctx.agentLoop.create(SessionId('redact'), { provider: 'mock', model: 'mock' })
+    send(agent, LEAKY)
+    await waitForIdle(ctx, agent)
+    const seen = modelSeen(adapter)
+    expect(seen).not.toContain('sk-test-Abc123')
+    expect(seen).toContain('⟨REDACTED:')
+    expect(seen).toContain('…9Jkl⟩')
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim()) as { mode: string; action: string }
+    expect(rec.mode).toBe('redact')
+    expect(rec.action).toBe('redact')
+  })
+
+  it('passes info-only batches through untouched', async () => {
+    const file = tempAudit()
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    await ctx.plugin(SecscanPolicy, { mode: 'redact', auditFile: file })
+    const agent = ctx.agentLoop.create(SessionId('entropy-only'), { provider: 'mock', model: 'mock' })
+    const HIGH_ENTROPY = 'qZ7Px2Km9Vb4Nc8Lf5Wd3' // 21 mixed chars: no rule match, above the entropy floor
+    send(agent, `note ${HIGH_ENTROPY} done`)
+    await waitForIdle(ctx, agent)
+    expect(modelSeen(adapter)).toContain(`note ${HIGH_ENTROPY} done`)
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim()) as { action: string; findings: Array<{ severity: string }> }
+    expect(rec.action).toBe('pass')
+    expect(rec.findings.every(f => f.severity === 'info')).toBe(true)
+  })
+
+  it('fails open on engine errors with a scan-error record', async () => {
+    const file = tempAudit()
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    await ctx.plugin(SecscanPolicy, { mode: 'redact', auditFile: file, failScan: true })
+    const agent = ctx.agentLoop.create(SessionId('redact-boom'), { provider: 'mock', model: 'mock' })
+    send(agent, LEAKY)
+    await waitForIdle(ctx, agent)
+    expect(modelSeen(adapter)).toContain(LEAKY)
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim()) as { kind: string }
+    expect(rec.kind).toBe('scan-error')
   })
 })
