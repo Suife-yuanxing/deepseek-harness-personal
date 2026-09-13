@@ -18,11 +18,14 @@ import {
   type Finding, type KnownCredential, type ScanOptions,
 } from '@deepseek-ai/dsh-secscan'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 // Type-only side effects: the canonical event augmentations these listeners
-// program against. No runtime dependency on either package.
+// program against. No runtime dependency on any of these packages; approval is
+// consumed opportunistically (`ctx.get`) so a deployment without it fails closed.
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
+import type {} from '@deepseek-ai/dsh-user-approval'
 import { createAudit, type Audit } from './audit.js'
 
 export const name = 'secscan-policy'
@@ -134,6 +137,13 @@ function summarize(findings: ReadonlyArray<Finding>): Array<{
   }))
 }
 
+/** Human-facing ask reason; the approval panel renders it verbatim as its title. */
+function summarizeForReason(findings: ReadonlyArray<Finding>): string {
+  const parts = findings.slice(0, 4).map(f => `${f.type} …${f.sampleLast4}`)
+  const more = findings.length > 4 ? ` 等 ${findings.length} 处` : ''
+  return `出口扫描发现 ${findings.length} 处疑似敏感内容（${parts.join('、')}${more}）；放行将原样发送，拒绝将中止本轮`
+}
+
 /** Register the pre-step egress gate. Mounts nothing in `off` mode. */
 export function apply(ctx: Context, config: Config = {}): void {
   const mode = config.mode ?? 'monitor'
@@ -167,7 +177,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     knownReady = refreshKnown()
   })
 
-  ctx.on('agent/pre-step', async ({ messages }, next): Promise<PreStepDecision> => {
+  ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
     await knownReady
     let batch: ReturnType<typeof scanBatch>
     try {
@@ -203,11 +213,28 @@ export function apply(ctx: Context, config: Config = {}): void {
       })
       return { kind: 'enter', messages: rewriteBatch(messages, batch.blocks) }
     }
-    // block: the approval ask lands in the next task; strictest interim posture.
+    // block: ask through the approval seam. toolName is a synthetic label (the
+    // wire accepts any non-empty string and the UI only displays it); the ask
+    // must run inside the open turn this pre-step belongs to. Every
+    // non-granting outcome — and any failure to ask at all — fails closed.
+    let outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' = 'unavailable'
+    try {
+      const approval = ctx.get('approval')
+      outcome = approval === undefined
+        ? 'unavailable'
+        : await approval.request({
+          agent: agent as Agent,
+          toolName: 'secscan',
+          reason: summarizeForReason(batch.all),
+        })
+    } catch {
+      outcome = 'unavailable' // outside an open turn, or a failing audit append
+    }
     await audit.record({
-      egress: 'pre-step', mode: current.mode, action: 'blocked',
+      egress: 'pre-step', mode: current.mode,
+      action: outcome === 'allowed-once' ? 'allowed' : 'blocked',
       findings: summarize(batch.all), truncated: batch.truncated,
     })
-    return { kind: 'reject' }
+    return outcome === 'allowed-once' ? next() : { kind: 'reject' }
   })
 }

@@ -57,6 +57,13 @@ function send(agent: Agent, text: string): void {
 
 const LEAKY = 'please store this sk-test-Abc123Def456Ghi789Jkl'
 
+/** Flattened text the model actually received (post pre-step decision). */
+function modelSeen(adapter: MockAdapter): string {
+  return adapter.requests[0]!.messages
+    .map(m => m.content.map(b => (b.type === 'text' ? b.text : '')).join(''))
+    .join('\n')
+}
+
 describe('secscan-policy (monitor)', () => {
   it('lets clean batches pass and writes no audit record', async () => {
     const file = tempAudit()
@@ -146,13 +153,6 @@ describe('secscan-policy (modes)', () => {
 })
 
 describe('secscan-policy (redact)', () => {
-  /** Flattened text the model actually received (post pre-step decision). */
-  function modelSeen(adapter: MockAdapter): string {
-    return adapter.requests[0]!.messages
-      .map(m => m.content.map(b => (b.type === 'text' ? b.text : '')).join(''))
-      .join('\n')
-  }
-
   it('enters the step with sensitive spans rewritten and records a redact action', async () => {
     const file = tempAudit()
     const adapter = new MockAdapter([textResponse('ok')])
@@ -196,5 +196,90 @@ describe('secscan-policy (redact)', () => {
     expect(modelSeen(adapter)).toContain(LEAKY)
     const rec = JSON.parse(readFileSync(file, 'utf8').trim()) as { kind: string }
     expect(rec.kind).toBe('scan-error')
+  })
+})
+
+describe('secscan-policy (block)', () => {
+  interface ApprovalProbe {
+    toolName: string
+    reason?: string
+  }
+  type Outcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+
+  function approvalStub(outcome: Outcome | 'throw'): { probe: ApprovalProbe[]; provide(): unknown } {
+    const probe: ApprovalProbe[] = []
+    return {
+      probe,
+      provide: () => ({
+        request: async (req: ApprovalProbe): Promise<Outcome> => {
+          probe.push(req)
+          if (outcome === 'throw') throw new Error('injected approval failure')
+          return outcome
+        },
+      }),
+    }
+  }
+
+  async function blockHarness(outcome: Outcome | 'throw'): Promise<{ adapter: MockAdapter; probe: ApprovalProbe[]; file: string; sendLeaky(): Promise<void> }> {
+    const stub = approvalStub(outcome)
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    ;(ctx as unknown as { provide(key: string, value: unknown): void }).provide('approval', stub.provide())
+    const file = tempAudit()
+    await ctx.plugin(SecscanPolicy, { mode: 'block', auditFile: file })
+    const agent = ctx.agentLoop.create(SessionId('block'), { provider: 'mock', model: 'mock' })
+    return {
+      adapter,
+      probe: stub.probe,
+      file,
+      sendLeaky: async () => {
+        send(agent, LEAKY)
+        await waitForIdle(ctx, agent)
+      },
+    }
+  }
+
+  it('asks with a synthetic tool name and rejects the turn when declined', async () => {
+    const h = await blockHarness('rejected')
+    await h.sendLeaky()
+    expect(h.probe).toHaveLength(1)
+    expect(h.probe[0]!.toolName).toBe('secscan')
+    expect(h.probe[0]!.reason).toContain('…9Jkl')
+    expect(h.probe[0]!.reason).not.toContain('sk-test-Abc123')
+    expect(h.adapter.requests).toHaveLength(0) // the step never ran
+    const rec = JSON.parse(readFileSync(h.file, 'utf8').trim()) as { mode: string; action: string }
+    expect(rec.mode).toBe('block')
+    expect(rec.action).toBe('blocked')
+  })
+
+  it('enters unredacted when allowed once', async () => {
+    const h = await blockHarness('allowed-once')
+    await h.sendLeaky()
+    expect(h.probe).toHaveLength(1)
+    expect(modelSeen(h.adapter)).toContain(LEAKY)
+    const rec = JSON.parse(readFileSync(h.file, 'utf8').trim()) as { action: string }
+    expect(rec.action).toBe('allowed')
+  })
+
+  it('fails closed when the approval ask throws', async () => {
+    const h = await blockHarness('throw')
+    await h.sendLeaky()
+    expect(h.probe).toHaveLength(1)
+    expect(h.adapter.requests).toHaveLength(0)
+    const rec = JSON.parse(readFileSync(h.file, 'utf8').trim()) as { action: string }
+    expect(rec.action).toBe('blocked')
+  })
+
+  it('fails closed when no approval service is composed', async () => {
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    const file = tempAudit()
+    await ctx.plugin(SecscanPolicy, { mode: 'block', auditFile: file })
+    const agent = ctx.agentLoop.create(SessionId('block-no-approval'), { provider: 'mock', model: 'mock' })
+    send(agent, LEAKY)
+    await waitForIdle(ctx, agent)
+    expect(adapter.requests).toHaveLength(0)
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim()) as { action: string }
+    expect(rec.action).toBe('blocked')
   })
 })

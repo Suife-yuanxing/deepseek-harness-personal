@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-secscan-policy",
-  "description": "Egress secret-scan policy: scans each pre-step message batch and monitors findings to a local audit; modes off|monitor (redact/block land in P2)",
+  "description": "Egress secret-scan policy: scans each pre-step message batch; modes off|monitor|redact|block (block asks through the approval seam)",
   "version": "0.1.0",
   "publishConfig": {
     "access": "public"
@@ -30,7 +30,8 @@
     "@deepseek-ai/dsh-agent": "workspace:^",
     "@deepseek-ai/dsh-credentials": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
-    "@deepseek-ai/dsh-secscan": "workspace:^"
+    "@deepseek-ai/dsh-secscan": "workspace:^",
+    "@deepseek-ai/dsh-user-approval": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
@@ -42,6 +43,7 @@
     "@deepseek-ai/dsh-secscan": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-system-prompt": "workspace:^",
-    "@deepseek-ai/dsh-tools": "workspace:^"
+    "@deepseek-ai/dsh-tools": "workspace:^",
+    "@deepseek-ai/dsh-user-approval": "workspace:^"
   }
 }
