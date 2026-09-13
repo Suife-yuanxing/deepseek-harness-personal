@@ -10,6 +10,15 @@
       "path": "../../../vendor/cordis"
     },
     {
+      "path": "../../core/agent"
+    },
+    {
+      "path": "../../credentials/credentials"
+    },
+    {
+      "path": "../../runtime-diagnostics/invariants"
+    },
+    {
       "path": "../secscan"
     }
   ]
