@@ -355,3 +355,60 @@ describe('secscan-policy (settings + event)', () => {
     expect(JSON.stringify(payload)).not.toContain('sk-test-Abc123')
   })
 })
+
+describe('secscan-policy (command + tool)', () => {
+  interface CommandDef {
+    name: string
+    handler: (inv: { rawInput: string }) => Promise<{ kind: string; text?: string }>
+  }
+  interface ToolDef {
+    name: string
+    execute: (args: { text: string }) => Promise<{ count: number; truncated: boolean; findings: Array<{ sampleLast4: string }> }>
+  }
+
+  async function registerHarness(): Promise<{ commands: CommandDef[]; tools: ToolDef[] }> {
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    const commands: CommandDef[] = []
+    const tools: ToolDef[] = []
+    ;(ctx as unknown as { provide(key: string, value: unknown): void }).provide('commands', {
+      register: (def: CommandDef) => { commands.push(def) },
+    })
+    // The harness already mounts the real ToolRuntime: wrap its register so
+    // definitions are captured AND author-validated by the real DSL.
+    const runtime = ctx.get('tools') as unknown as { register: (def: ToolDef) => unknown }
+    const origin = runtime.register.bind(runtime)
+    runtime.register = (def: ToolDef) => { tools.push(def); return origin(def) }
+    await ctx.plugin(SecscanPolicy, { mode: 'monitor', auditFile: tempAudit() })
+    return { commands, tools }
+  }
+
+  it('registers the secrecy-scan command and the secscan_scan tool', async () => {
+    const { commands, tools } = await registerHarness()
+    expect(commands.map(c => c.name)).toEqual(['secrecy-scan'])
+    expect(tools.map(t => t.name)).toEqual(['secscan_scan'])
+  })
+
+  it('secrecy-scan summarizes findings without echoing text', async () => {
+    const { commands } = await registerHarness()
+    const result = await commands[0]!.handler({ rawInput: `token ${LEAKY}` })
+    expect(result.kind).toBe('success')
+    expect(result.text).toContain('…9Jkl')
+    expect(result.text).not.toContain('sk-test-Abc123')
+  })
+
+  it('secrecy-scan with empty input returns a usage error', async () => {
+    const { commands } = await registerHarness()
+    const result = await commands[0]!.handler({ rawInput: '   ' })
+    expect(result.kind).toBe('error')
+  })
+
+  it('secscan_scan returns the canonical scan value', async () => {
+    const { tools } = await registerHarness()
+    const value = await tools[0]!.execute({ text: `token ${LEAKY}` })
+    expect(value.count).toBeGreaterThan(0)
+    expect(value.truncated).toBe(false)
+    expect(value.findings.some(f => f.sampleLast4 === '9Jkl')).toBe(true)
+    expect(JSON.stringify(value)).not.toContain('sk-test-Abc123')
+  })
+})

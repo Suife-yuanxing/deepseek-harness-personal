@@ -19,6 +19,7 @@ import {
   buildKnownCredentials, redactText, scan,
   type Finding, type KnownCredential, type ScanOptions,
 } from '@deepseek-ai/dsh-secscan'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
@@ -26,6 +27,7 @@ import type { UserMessage } from '@deepseek-ai/dsh-session'
 // program against. No runtime dependency on any of these packages; approval is
 // consumed opportunistically (`ctx.get`) so a deployment without it fails closed.
 import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { createAudit, type Audit } from './audit.js'
@@ -208,6 +210,80 @@ export function apply(ctx: Context, config: Config = {}): void {
     } catch {
       // notification is decoration; a scan decision never depends on it
     }
+  }
+
+  // Manual scan surface: the /secrecy-scan command and the secscan_scan tool.
+  // Both honor the live ignore list, and neither audits — the audit records
+  // egress decisions, and a manual scan sends nothing anywhere.
+  const commands = ctx.get('commands')
+  const tools = ctx.get('tools')
+  if (commands !== undefined || tools !== undefined) {
+    const scanTextNow = (text: string): ReturnType<typeof scan> => scan(
+      { kind: 'text', content: text },
+      {
+        known,
+        entropy: true,
+        ...(source().ignoreRuleIds?.length ? { ignoreRuleIds: source().ignoreRuleIds } : {}),
+        ...(source().maxBytes === undefined ? {} : { maxBytes: source().maxBytes }),
+      },
+    )
+    commands?.register({
+      name: 'secrecy-scan',
+      description: 'Scan text for secrets/credentials before it leaves the machine',
+      input: { hint: '<text>' },
+      handler: ({ rawInput }: { rawInput: string }): { kind: 'error'; text: string } | { kind: 'success'; text: string } => {
+        const text = rawInput.trim()
+        if (!text) return { kind: 'error', text: '用法：/secrecy-scan <要检查的文本>' }
+        const report = scanTextNow(text)
+        if (report.findings.length === 0) return { kind: 'success', text: '未发现疑似敏感内容。' }
+        const parts = report.findings.slice(0, 4).map(f => `${f.type} …${f.sampleLast4}`)
+        const tail = report.truncated ? '（超长已截断）' : ''
+        return { kind: 'success', text: `发现 ${report.findings.length} 处疑似敏感内容：${parts.join('、')}${tail}` }
+      },
+    })
+    tools?.register(defineTool({
+      name: 'secscan_scan',
+      description: 'Scan a snippet for API keys, tokens and other credentials. Use it to check drafts before sending them anywhere.',
+      parameters: {
+        text: { type: 'string', required: true, description: 'The text to scan.' },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            count: { type: 'number', required: true },
+            truncated: { type: 'boolean', required: true },
+            findings: {
+              type: 'array',
+              required: true,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  ruleId: { type: 'string', required: true },
+                  type: { type: 'string', required: true },
+                  severity: { type: 'string', required: true },
+                  sampleLast4: { type: 'string', required: true },
+                  source: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        render: (_args, value) => [{
+          type: 'text',
+          text: value.findings.length === 0
+            ? 'SecScan: no suspected secrets found.'
+            : `SecScan: ${value.findings.length} suspected secret(s): ${value.findings.map(f => `${f.type} …${f.sampleLast4}`).join(', ')}`,
+        }],
+      },
+      execute: async (args) => {
+        const report = scanTextNow(args.text)
+        return { count: report.findings.length, truncated: report.truncated, findings: summarize(report.findings) }
+      },
+      presentCall: args => ({ card: 'generic', title: 'SecScan 文本扫描', kind: 'other', rawInput: args.text }),
+    }))
   }
 
   ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
