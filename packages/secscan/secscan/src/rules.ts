@@ -33,7 +33,10 @@ export const RULES: Rule[] = [
   { id: 'sendgrid-key', type: 'api-key', severity: 'high', pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g },
   { id: 'twilio-key', type: 'api-key', severity: 'high', pattern: /\bSK[0-9a-fA-F]{32}\b/g },
   { id: 'gcp-service-account', type: 'private-key', severity: 'high', pattern: /"type"\s*:\s*"service_account"/g },
-  { id: 'heroku-key', type: 'api-key', severity: 'high', pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g },
+  // Heroku keys are UUID-shaped; require the heroku context (with an optional
+  // api-key|key qualifier) so bare UUIDs — memory-space ids, session ids —
+  // are never flagged as secrets.
+  { id: 'heroku-key', type: 'api-key', severity: 'high', pattern: /\bheroku(?:[_-]?\s*(?:api[_-]?key|key)\s*)?[^a-z0-9]{0,64}?\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi },
   { id: 'url-cred-param', type: 'credential-param', severity: 'medium', pattern: /[?&](?:api[_-]?key|token|password|access[_-]?token)=[a-z0-9._-]{8,}/gi },
 ]
 

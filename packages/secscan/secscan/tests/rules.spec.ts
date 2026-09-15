@@ -11,6 +11,7 @@ const SK_SAMPLE = j('sk-test-', 'Abc123Def456Ghi789Jkl')
 const AWS_SAMPLE = j('AKIA', 'IOSFODNN7EXAMPL3')
 const ENV_SECRET_LINE = j('MY_API_KEY', ' = "', 'abcdef1234567890', '"')
 const JSON_SECRET_LINE = j('{"api_key": "', 'abcdef1234567890', '"}')
+const UUID_SAMPLE = j('9f3c2d1e-', 'a4b5-', '4c6d-', '8e7f-0123456789ab')
 
 describe('scanRules', () => {
   it('finds a generic sk- style token', () => {
@@ -70,6 +71,19 @@ describe('scanRules', () => {
 
   it('finds a bearer header value', () => {
     expect(scanRules(j('Authorization: Bearer ', 'abcdefghijklmnopqrst')).some(f => f.ruleId === 'bearer-token')).toBe(true)
+  })
+
+  it('finds a Heroku API key only when heroku context is present', () => {
+    expect(scanRules(j('HEROKU_API_KEY=', UUID_SAMPLE)).some(f => f.ruleId === 'heroku-key')).toBe(true)
+    expect(scanRules(j('heroku_key: ', UUID_SAMPLE)).some(f => f.ruleId === 'heroku-key')).toBe(true)
+    expect(scanRules(j('heroku key = ', UUID_SAMPLE)).some(f => f.ruleId === 'heroku-key')).toBe(true)
+    expect(scanRules(j('export HEROKU_API_KEY="', UUID_SAMPLE, '"')).some(f => f.ruleId === 'heroku-key')).toBe(true)
+  })
+
+  it('does not flag a bare UUID (memory-space or session ids)', () => {
+    expect(scanRules(UUID_SAMPLE).some(f => f.ruleId === 'heroku-key')).toBe(false)
+    expect(scanRules(j('deployed via heroku, session ', UUID_SAMPLE)).some(f => f.ruleId === 'heroku-key')).toBe(false)
+    expect(scanRules(j('www.heroku.com/resource ', UUID_SAMPLE)).some(f => f.ruleId === 'heroku-key')).toBe(false)
   })
 
   it('returns positions that slice back to the match, with last4', () => {
