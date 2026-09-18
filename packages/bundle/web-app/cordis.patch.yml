@@ -195,6 +195,18 @@
     - id: ui-settings-plugin-inventory
       name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
 
+    # Token usage: the settings section that bills calls in CNY, standard or
+    # through a built-in Token Plan (mode + period live in the ui-token-usage
+    # settings namespace, registered by the same package's node half).
+    - id: ui-token-usage
+      name: '@deepseek-ai/dsh-client-ui-token-usage'
+
+    # Egress secret scan: mode cubes + ignore-rule rows over the `secscan`
+    # settings namespace (installed by dsh-secscan-policy) and the
+    # per-session findings strip over the pushed `secscan/findings` event.
+    - id: ui-secscan
+      name: '@deepseek-ai/dsh-client-ui-secscan'
+
     - id: ui-conversation
       name: '@deepseek-ai/dsh-client-ui-conversation'
 
